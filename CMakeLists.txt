@@ -11,8 +11,17 @@ add_executable(MiniDB
         src/main.c
         src/database.c
         src/server.c
+        src/thread_pool.c
 )
 
 target_link_libraries(MiniDB
+        pthread
+)
+
+add_executable(stress_test
+        tests/stress_test.c
+)
+
+target_link_libraries(stress_test
         pthread
 )

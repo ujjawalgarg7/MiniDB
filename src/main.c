@@ -1,39 +1,51 @@
 #include <stdio.h>
-#include <stdlib.h>
+
 #include "database.h"
+#include "server.h"
 
-int main(void) {
 
-    printf("MiniDB is Starting...!\n");
+int main(void)
+{
+    printf("MiniDB is Starting...\n");
+
+
+    /*
+     * Create the database.
+     */
     HashTable db;
 
     db_init(&db);
 
 
-    db_set(&db, "name","Ujjawal");
+    /*
+     * Start the TCP server.
+     *
+     * server_start() will:
+     * 1. Create the thread pool
+     * 2. Create the TCP socket
+     * 3. Accept clients
+     * 4. Put clients into the task queue
+     * 5. Workers handle the clients
+     */
+    if (server_start(&db) != 0) {
 
-    db_set(&db, "city","Noida");
+        fprintf(
+            stderr,
+            "Failed to start MiniDB server.\n"
+        );
 
-    char *name = db_get(&db, "name");
-    char *city = db_get(&db, "city");
+        db_destroy(&db);
 
-    if (name != NULL) {
-        printf("Name = %s\n",name);
-        free(name);
+        return 1;
     }
-    if (city != NULL) {
-        printf("City = %s\n",city);
-        free(city);
-    }
 
-    printf("name exists = %d\n",db_exists(&db, "name"));
 
-    printf("age exists = %d\n",db_exists(&db, "age"));
-
-    printf("delete city = %d\n",db_delete(&db, "city"));
-
-    printf("city exists = %d\n",db_exists(&db, "city"));
-
+    /*
+     * Cleanup.
+     *
+     * Currently unreachable because
+     * server_start() runs continuously.
+     */
     db_destroy(&db);
 
 
