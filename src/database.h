@@ -22,9 +22,10 @@ typedef struct {
 
 void db_init(HashTable *db);
 
-void db_set(HashTable *db, char *key, char *value);
-char *db_get(HashTable *db, char *key);
-int db_exists(HashTable *db, char *key);
+void db_set(HashTable *db, const char *key,const char *value);
+char *db_get(HashTable *db, const char *key);
+int db_delete(HashTable *db, const char *key);
+int db_exists(HashTable *db, const char *key);
 void db_destroy(HashTable *db);
 
 #endif //MINIDB_DATABASE_H
