@@ -1,231 +1,118 @@
-//
-// Created by ujjawal on 21/08/26.
-//
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
 #include <pthread.h>
 
-#include <arpa/inet.h>
-#include <sys/socket.h>
+#include "../src/database.h"
 
-#define SERVER_IP "127.0.0.1"
-#define SERVER_PORT 8080
-
-#define NUM_CLIENTS 10
-#define OPERATIONS_PER_CLIENT 100
+#include <time.h>
+#define NUM_THREADS 8
+#define OPERATIONS_PER_THREAD 10000
 
 
 typedef struct {
-    int client_id;
-} ClientArgs;
+    HashTable *db;
+    int thread_id;
+} WorkerArgs;
 
 
-/*
- * Connect to MiniDB.
- */
-int connect_to_server(void)
+void *stress_worker(void *arg)
 {
-    int socket_fd = socket(
-        AF_INET,
-        SOCK_STREAM,
-        0
-    );
+    WorkerArgs *args = (WorkerArgs *)arg;
 
-    if (socket_fd < 0) {
-        perror("socket");
-        return -1;
-    }
+    HashTable *db = args->db;
+    int thread_id = args->thread_id;
 
 
-    struct sockaddr_in server_addr;
-
-    memset(
-        &server_addr,
-        0,
-        sizeof(server_addr)
-    );
-
-
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(SERVER_PORT);
-
-
-    if (inet_pton(
-            AF_INET,
-            SERVER_IP,
-            &server_addr.sin_addr
-        ) <= 0) {
-
-        perror("inet_pton");
-
-        close(socket_fd);
-
-        return -1;
-    }
-
-
-    if (connect(
-            socket_fd,
-            (struct sockaddr *)&server_addr,
-            sizeof(server_addr)
-        ) < 0) {
-
-        perror("connect");
-
-        close(socket_fd);
-
-        return -1;
-    }
-
-
-    return socket_fd;
-}
-
-
-/*
- * Send command and read response.
- */
-int send_command(
-    int socket_fd,
-    const char *command
-)
-{
-    char buffer[1024];
-
-
-    send(
-        socket_fd,
-        command,
-        strlen(command),
-        0
-    );
-
-
-    ssize_t bytes = recv(
-        socket_fd,
-        buffer,
-        sizeof(buffer) - 1,
-        0
-    );
-
-
-    if (bytes <= 0) {
-        return -1;
-    }
-
-
-    buffer[bytes] = '\0';
-
-
-    return 0;
-}
-
-
-/*
- * One client thread.
- */
-void *client_worker(void *arg)
-{
-    ClientArgs *args = (ClientArgs *)arg;
-
-    int client_id = args->client_id;
-
-
-    int socket_fd = connect_to_server();
-
-
-    if (socket_fd < 0) {
-        return NULL;
-    }
-
-
-    printf(
-        "Client %d connected\n",
-        client_id
-    );
+    char key[64];
+    char value[64];
 
 
     for (int i = 0;
-         i < OPERATIONS_PER_CLIENT;
+         i < OPERATIONS_PER_THREAD;
          i++) {
 
-        char command[256];
+        /*
+         * Each thread works on its
+         * own key.
+         */
+        snprintf(
+            key,
+            sizeof(key),
+            "thread_%d",
+            thread_id
+        );
+
+
+        snprintf(
+            value,
+            sizeof(value),
+            "value_%d",
+            i
+        );
 
 
         /*
          * SET
          */
-
-        snprintf(
-            command,
-            sizeof(command),
-            "SET client%d_key%d value%d\n",
-            client_id,
-            i,
-            i
+        db_set(
+            db,
+            key,
+            value
         );
-
-
-        if (send_command(
-                socket_fd,
-                command
-            ) < 0) {
-
-            printf(
-                "Client %d: SET failed\n",
-                client_id
-            );
-
-            break;
-        }
 
 
         /*
          * GET
          */
-
-        snprintf(
-            command,
-            sizeof(command),
-            "GET client%d_key%d\n",
-            client_id,
-            i
-        );
-
-
-        if (send_command(
-                socket_fd,
-                command
-            ) < 0) {
-
-            printf(
-                "Client %d: GET failed\n",
-                client_id
+        char *result =
+            db_get(
+                db,
+                key
             );
 
-            break;
+
+        if (result == NULL) {
+
+            printf(
+                "ERROR: Thread %d "
+                "GET returned NULL\n",
+                thread_id
+            );
+
+            continue;
+        }
+
+
+        /*
+         * We don't need the value anymore.
+         */
+        free(result);
+
+
+        /*
+         * EXISTS
+         */
+        int exists =
+            db_exists(
+                db,
+                key
+            );
+
+
+        if (!exists) {
+
+            printf(
+                "ERROR: Thread %d "
+                "key does not exist\n",
+                thread_id
+            );
         }
     }
 
 
-    /*
-     * Close connection.
-     */
-
-    send_command(
-        socket_fd,
-        "EXIT\n"
-    );
-
-
-    close(socket_fd);
-
-
     printf(
-        "Client %d finished\n",
-        client_id
+        "Thread %d completed\n",
+        thread_id
     );
 
 
@@ -236,46 +123,75 @@ void *client_worker(void *arg)
 int main(void)
 {
     printf(
-        "MiniDB stress test starting...\n"
+        "============================\n"
+        "MiniDB Concurrency Stress Test\n"
+        "============================\n"
     );
 
 
-    pthread_t threads[NUM_CLIENTS];
+    HashTable db;
 
-    ClientArgs args[NUM_CLIENTS];
+    db_init(&db);
 
 
+    pthread_t threads[NUM_THREADS];
+
+    WorkerArgs args[NUM_THREADS];
+
+
+    printf(
+        "Threads: %d\n",
+        NUM_THREADS
+    );
+
+    printf(
+        "Operations per thread: %d\n",
+        OPERATIONS_PER_THREAD
+    );
+
+    printf(
+        "Total operations: %d\n\n",
+        NUM_THREADS *
+        OPERATIONS_PER_THREAD
+    );
+
+    struct timespec start, end;
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
     /*
-     * Create clients.
+     * Start worker threads.
      */
-
     for (int i = 0;
-         i < NUM_CLIENTS;
+         i < NUM_THREADS;
          i++) {
 
-        args[i].client_id = i;
+        args[i].db = &db;
+        args[i].thread_id = i;
 
 
         if (pthread_create(
                 &threads[i],
                 NULL,
-                client_worker,
+                stress_worker,
                 &args[i]
             ) != 0) {
 
-            perror("pthread_create");
+            perror(
+                "pthread_create"
+            );
 
-            return EXIT_FAILURE;
+            db_destroy(&db);
+
+            return 1;
         }
     }
 
 
     /*
-     * Wait for clients.
+     * Wait for all threads.
      */
-
     for (int i = 0;
-         i < NUM_CLIENTS;
+         i < NUM_THREADS;
          i++) {
 
         pthread_join(
@@ -283,10 +199,90 @@ int main(void)
             NULL
         );
     }
+    clock_gettime(CLOCK_MONOTONIC, &end);
+
+    double elapsed =
+    (end.tv_sec - start.tv_sec)
+    +
+    (end.tv_nsec - start.tv_nsec) / 1e9;
+
+    long total_operations =
+        (long) NUM_THREADS *
+        OPERATIONS_PER_THREAD;
+
+    double throughput =
+        total_operations / elapsed;
 
 
     printf(
-        "\nStress test completed.\n"
+    "\nExecution time: %.6f seconds\n",
+    elapsed
+);
+
+    printf(
+        "Throughput: %.2f operations/second\n",
+        throughput
+    );
+
+    printf(
+        "\nAll threads completed.\n"
+    );
+
+
+    /*
+     * Verify final database state.
+     */
+    printf(
+        "\nFinal verification:\n"
+    );
+
+
+    for (int i = 0;
+         i < NUM_THREADS;
+         i++) {
+
+        char key[64];
+
+        snprintf(
+            key,
+            sizeof(key),
+            "thread_%d",
+            i
+        );
+
+
+        char *value =
+            db_get(
+                &db,
+                key
+            );
+
+
+        if (value != NULL) {
+
+            printf(
+                "  %s = %s\n",
+                key,
+                value
+            );
+
+            free(value);
+
+        } else {
+
+            printf(
+                "  %s = MISSING\n",
+                key
+            );
+        }
+    }
+
+
+    db_destroy(&db);
+
+
+    printf(
+        "\nStress test complete.\n"
     );
 
 

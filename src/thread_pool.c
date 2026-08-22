@@ -80,6 +80,8 @@ static void client_handler(int client_fd,HashTable *db){
 
             char *key = strtok(NULL, " ");
             char *value = strtok(NULL, " ");
+            char *option = strtok(NULL, " ");
+            char *seconds_str = strtok(NULL, " ");
 
 
             if (key == NULL || value == NULL) {
@@ -87,27 +89,38 @@ static void client_handler(int client_fd,HashTable *db){
                 send(
                     client_fd,
                     "ERR usage: SET key value\n",
-                    25,
+                    strlen("ERR usage: SET key value\n"),
                     0
                 );
 
                 continue;
             }
 
-
-            db_set(
-                db,
-                key,
-                value
-            );
+            if (option == NULL) {
+                db_set(db,key,value);
 
 
-            send(
-                client_fd,
-                "OK\n",
-                3,
-                0
-            );
+                send(client_fd,"OK\n",3,0);
+
+                continue;
+            }
+            if (strcmp(option, "EX") == 0) {
+                if (seconds_str == NULL) {
+                    send(client_fd,"ERR missing expiration time \n",strlen("ERR missing expiration time"),0);
+                    continue;
+                }
+                int seconds = atoi(seconds_str);
+
+                if (seconds <= 0) {
+                    send(client_fd,"ERR invalid expiration time \n",strlen("ERR invalid expiration time"),0);
+                    continue;
+                }
+                db_set_expire(db,key,value,seconds);
+
+                send(client_fd,"OK\n",3,0);
+                continue;
+            }
+            send(client_fd,"ERR unknown SET option\n",strlen("ERR unknown SET option\n"),0);
         }
 
 
