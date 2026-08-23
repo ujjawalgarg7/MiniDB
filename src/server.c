@@ -1,52 +1,54 @@
 #include "server.h"
-#include "thread_pool.h"
-#include <stdio.h>
-#include <unistd.h>
-#include <sys/socket.h>
+
+#include <arpa/inet.h>
 #include <netinet/in.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include "thread_pool.h"
 
 
-int server_start(HashTable *db){
-    /*
-     * Initialize thread pool.
-     */
-    ThreadPool pool;
-
-    thread_pool_init(&pool);
+#define SERVER_PORT 8080
+#define BACKLOG 64
 
 
-    /*
-     * Create TCP socket.
-     */
-    int server_fd = socket(
-        AF_INET,
-        SOCK_STREAM,
-        0
-    );
+int server_start(
+    HashTable *db,
+    WAL *wal
+)
+{
+    int server_fd =
+        socket(
+            AF_INET,
+            SOCK_STREAM,
+            0
+        );
 
 
     if (server_fd < 0) {
 
-        perror("socket() failed");
+        perror("socket");
 
         return -1;
     }
 
 
-    /*
-     * Allow quick reuse of the port.
-     */
-    int opt = 1;
+    int option = 1;
 
-    if (setsockopt(
+
+    if (
+        setsockopt(
             server_fd,
             SOL_SOCKET,
             SO_REUSEADDR,
-            &opt,
-            sizeof(opt)
-        ) < 0) {
+            &option,
+            sizeof(option)
+        ) < 0
+    ) {
 
-        perror("setsockopt() failed");
+        perror("setsockopt");
 
         close(server_fd);
 
@@ -54,31 +56,35 @@ int server_start(HashTable *db){
     }
 
 
-    /*
-     * Configure server address.
-     */
-    struct sockaddr_in server_addr = {0};
+    struct sockaddr_in server_addr;
 
 
-    server_addr.sin_family = AF_INET;
+    memset(
+        &server_addr,
+        0,
+        sizeof(server_addr)
+    );
 
-    server_addr.sin_port =
-        htons(SERVER_PORT);
+
+    server_addr.sin_family =
+        AF_INET;
 
     server_addr.sin_addr.s_addr =
         htonl(INADDR_ANY);
 
+    server_addr.sin_port =
+        htons(SERVER_PORT);
 
-    /*
-     * Bind socket.
-     */
-    if (bind(
+
+    if (
+        bind(
             server_fd,
             (struct sockaddr *)&server_addr,
             sizeof(server_addr)
-        ) < 0) {
+        ) < 0
+    ) {
 
-        perror("bind() failed");
+        perror("bind");
 
         close(server_fd);
 
@@ -86,20 +92,27 @@ int server_start(HashTable *db){
     }
 
 
-    /*
-     * Start listening.
-     */
-    if (listen(
+    if (
+        listen(
             server_fd,
-            10
-        ) < 0) {
+            BACKLOG
+        ) < 0
+    ) {
 
-        perror("listen() failed");
+        perror("listen");
 
         close(server_fd);
 
         return -1;
     }
+
+
+    ThreadPool pool;
+
+
+    thread_pool_init(
+        &pool
+    );
 
 
     printf(
@@ -108,27 +121,25 @@ int server_start(HashTable *db){
     );
 
 
-    /*
-     * Accept clients forever.
-     */
     while (1) {
 
         struct sockaddr_in client_addr;
 
-        socklen_t client_addr_len =
+        socklen_t client_len =
             sizeof(client_addr);
 
 
-        int client_fd = accept(
-            server_fd,
-            (struct sockaddr *)&client_addr,
-            &client_addr_len
-        );
+        int client_fd =
+            accept(
+                server_fd,
+                (struct sockaddr *)&client_addr,
+                &client_len
+            );
 
 
         if (client_fd < 0) {
 
-            perror("accept() failed");
+            perror("accept");
 
             continue;
         }
@@ -140,27 +151,25 @@ int server_start(HashTable *db){
         );
 
 
-        /*
-         * Add client to thread pool.
-         *
-         * A worker thread will pick up
-         * this client from the queue.
-         */
         thread_pool_add(
             &pool,
             client_fd,
-            db
+            db,
+            wal
         );
     }
 
 
     /*
-     * This code is currently unreachable
-     * because the server runs continuously.
+     * Normally unreachable.
      */
-    thread_pool_destroy(&pool);
+    thread_pool_destroy(
+        &pool
+    );
+
 
     close(server_fd);
+
 
     return 0;
 }

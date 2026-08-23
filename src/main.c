@@ -2,51 +2,111 @@
 
 #include "database.h"
 #include "server.h"
+#include "wal.h"
 
 
 int main(void)
 {
-    printf("MiniDB is Starting...\n");
+    printf(
+        "MiniDB is Starting...\n"
+    );
 
 
-    /*
-     * Create the database.
-     */
     HashTable db;
 
-    db_init(&db);
+
+    db_init(
+        &db
+    );
 
 
-    /*
-     * Start the TCP server.
-     *
-     * server_start() will:
-     * 1. Create the thread pool
-     * 2. Create the TCP socket
-     * 3. Accept clients
-     * 4. Put clients into the task queue
-     * 5. Workers handle the clients
-     */
-    if (server_start(&db) != 0) {
+    WAL wal;
+
+
+    if (
+        wal_init(
+            &wal,
+            "minidb.wal"
+        ) != 0
+    ) {
 
         fprintf(
             stderr,
-            "Failed to start MiniDB server.\n"
+            "Failed to initialize WAL.\n"
         );
 
-        db_destroy(&db);
+        db_destroy(
+            &db
+        );
 
         return 1;
     }
 
 
     /*
-     * Cleanup.
-     *
-     * Currently unreachable because
-     * server_start() runs continuously.
+     * Recover previous operations.
      */
-    db_destroy(&db);
+    if (
+        wal_replay(
+            &wal,
+            &db
+        ) != 0
+    ) {
+
+        fprintf(
+            stderr,
+            "Failed to replay WAL.\n"
+        );
+
+        wal_destroy(
+            &wal
+        );
+
+        db_destroy(
+            &db
+        );
+
+        return 1;
+    }
+
+
+    /*
+     * Start server.
+     */
+    if (
+        server_start(
+            &db,
+            &wal
+        ) != 0
+    ) {
+
+        fprintf(
+            stderr,
+            "Failed to start MiniDB server.\n"
+        );
+
+        wal_destroy(
+            &wal
+        );
+
+        db_destroy(
+            &db
+        );
+
+        return 1;
+    }
+
+
+    /*
+     * Normally unreachable.
+     */
+    wal_destroy(
+        &wal
+    );
+
+    db_destroy(
+        &db
+    );
 
 
     return 0;

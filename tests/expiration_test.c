@@ -1,11 +1,10 @@
-//
-// Created by ujjawal on 22/08/26.
-//
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "../src/database.h"
+
 
 int main(void)
 {
@@ -13,29 +12,31 @@ int main(void)
     printf("MiniDB Expiration Test\n");
     printf("============================\n\n");
 
+
     HashTable db;
 
     db_init(&db);
 
-    /*
-     * Set key with 3-second expiration.
-     */
-    printf("Setting user = Rahul for 3 seconds...\n");
 
-    db_set_expire(
+    printf(
+        "Setting user = Rahul for 3 seconds...\n"
+    );
+
+
+    db_set_expires_at(
         &db,
         "user",
         "Rahul",
-        3
+        time(NULL) + 3
     );
 
-    /*
-     * Immediately try GET.
-     */
-    char *value = db_get(
-        &db,
-        "user"
-    );
+
+    char *value =
+        db_get(
+            &db,
+            "user"
+        );
+
 
     if (value != NULL) {
 
@@ -51,24 +52,26 @@ int main(void)
         printf(
             "ERROR: Key expired too early!\n"
         );
+
+        db_destroy(&db);
+
+        return EXIT_FAILURE;
     }
 
 
-    /*
-     * Wait 4 seconds.
-     */
-    printf("\nWaiting 4 seconds...\n");
+    printf(
+        "\nWaiting 4 seconds...\n"
+    );
+
 
     sleep(4);
 
 
-    /*
-     * Try GET again.
-     */
-    value = db_get(
-        &db,
-        "user"
-    );
+    value =
+        db_get(
+            &db,
+            "user"
+        );
 
 
     if (value == NULL) {
@@ -76,16 +79,6 @@ int main(void)
         printf(
             "After 4 seconds: EXPIRED\n"
         );
-        printf("\nChecking again...\n");
-
-        value = db_get(&db, "user");
-
-        if (value == NULL) {
-            printf("Second GET: key does not exist\n");
-        } else {
-            printf("ERROR: key still exists: %s\n", value);
-            free(value);
-        }
 
     } else {
 
@@ -95,12 +88,53 @@ int main(void)
         );
 
         free(value);
+
+        db_destroy(&db);
+
+        return EXIT_FAILURE;
+    }
+
+
+    printf(
+        "\nChecking again...\n"
+    );
+
+
+    value =
+        db_get(
+            &db,
+            "user"
+        );
+
+
+    if (value == NULL) {
+
+        printf(
+            "Second GET: key does not exist\n"
+        );
+
+    } else {
+
+        printf(
+            "ERROR: Second GET returned: %s\n",
+            value
+        );
+
+        free(value);
+
+        db_destroy(&db);
+
+        return EXIT_FAILURE;
     }
 
 
     db_destroy(&db);
 
-    printf("\nExpiration test complete.\n");
 
-    return 0;
+    printf(
+        "\nExpiration test complete.\n"
+    );
+
+
+    return EXIT_SUCCESS;
 }

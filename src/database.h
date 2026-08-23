@@ -1,13 +1,19 @@
 #ifndef DATABASE_H
 #define DATABASE_H
+
 #include <pthread.h>
 #include <time.h>
+
 #define TABLE_SIZE 10
 
 typedef struct Entry {
     char *key;
     char *value;
 
+    /*
+     * 0 = no expiration
+     * otherwise absolute Unix timestamp
+     */
     time_t expires_at;
 
     struct Entry *next;
@@ -16,18 +22,33 @@ typedef struct Entry {
 
 typedef struct {
     Entry *buckets[TABLE_SIZE];
+
+    /*
+     * One lock per bucket.
+     */
     pthread_rwlock_t locks[TABLE_SIZE];
 
+    /*
+     * Background expiration thread.
+     */
     pthread_t expiration_thread;
+
     int expiration_thread_running;
 
     pthread_mutex_t expiration_mutex;
+
     pthread_cond_t expiration_cond;
+
 } HashTable;
 
 
+/* Database lifecycle */
 void db_init(HashTable *db);
 
+void db_destroy(HashTable *db);
+
+
+/* Basic operations */
 void db_set(
     HashTable *db,
     const char *key,
@@ -49,15 +70,17 @@ int db_exists(
     const char *key
 );
 
-void db_destroy(
-    HashTable *db
-);
 
-void db_set_expire(
+/*
+ * Set value with an absolute expiration timestamp.
+ *
+ * expires_at == 0 means no expiration.
+ */
+void db_set_expires_at(
     HashTable *db,
     const char *key,
     const char *value,
-    int seconds
+    time_t expires_at
 );
 
 #endif

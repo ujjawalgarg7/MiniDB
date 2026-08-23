@@ -1,14 +1,33 @@
-//
-// Created by ujjawal on 21/08/26.
-//
 #include "thread_pool.h"
-#include <string.h>
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/socket.h>
 
-static void client_handler(int client_fd,HashTable *db){
+
+static void send_text(
+    int client_fd,
+    const char *text
+)
+{
+    send(
+        client_fd,
+        text,
+        strlen(text),
+        0
+    );
+}
+
+
+static void client_handler(
+    int client_fd,
+    HashTable *db,
+    WAL *wal
+)
+{
     char buffer[1024];
 
 
@@ -20,12 +39,13 @@ static void client_handler(int client_fd,HashTable *db){
 
     while (1) {
 
-        ssize_t bytes_received = recv(
-            client_fd,
-            buffer,
-            sizeof(buffer) - 1,
-            0
-        );
+        ssize_t bytes_received =
+            recv(
+                client_fd,
+                buffer,
+                sizeof(buffer) - 1,
+                0
+            );
 
 
         if (bytes_received < 0) {
@@ -47,25 +67,21 @@ static void client_handler(int client_fd,HashTable *db){
         }
 
 
-        buffer[bytes_received] = '\0';
+        buffer[bytes_received] =
+            '\0';
 
 
-        /*
-         * Remove newline.
-         */
         buffer[strcspn(
             buffer,
             "\r\n"
         )] = '\0';
 
 
-        /*
-         * Parse command.
-         */
-        char *command = strtok(
-            buffer,
-            " "
-        );
+        char *command =
+            strtok(
+                buffer,
+                " "
+            );
 
 
         if (command == NULL) {
@@ -76,91 +92,231 @@ static void client_handler(int client_fd,HashTable *db){
         /*
          * SET
          */
-        if (strcmp(command, "SET") == 0) {
+        if (
+            strcmp(
+                command,
+                "SET"
+            ) == 0
+        ) {
 
-            char *key = strtok(NULL, " ");
-            char *value = strtok(NULL, " ");
-            char *option = strtok(NULL, " ");
-            char *seconds_str = strtok(NULL, " ");
+            char *key =
+                strtok(NULL, " ");
+
+            char *value =
+                strtok(NULL, " ");
+
+            char *option =
+                strtok(NULL, " ");
+
+            char *seconds_str =
+                strtok(NULL, " ");
 
 
-            if (key == NULL || value == NULL) {
+            if (
+                key == NULL ||
+                value == NULL
+            ) {
 
-                send(
+                send_text(
                     client_fd,
-                    "ERR usage: SET key value\n",
-                    strlen("ERR usage: SET key value\n"),
-                    0
+                    "ERR usage: SET key value [EX seconds]\n"
                 );
 
                 continue;
             }
 
+
+            /*
+             * Normal SET.
+             */
             if (option == NULL) {
-                db_set(db,key,value);
+
+                /*
+                 * WAL first.
+                 */
+                if (
+                    wal_log_set(
+                        wal,
+                        key,
+                        value,
+                        "0"
+                    ) != 0
+                ) {
+
+                    send_text(
+                        client_fd,
+                        "ERR WAL write failed\n"
+                    );
+
+                    continue;
+                }
 
 
-                send(client_fd,"OK\n",3,0);
+                db_set(
+                    db,
+                    key,
+                    value
+                );
+
+
+                send_text(
+                    client_fd,
+                    "OK\n"
+                );
 
                 continue;
             }
-            if (strcmp(option, "EX") == 0) {
+
+
+            /*
+             * SET ... EX seconds
+             */
+            if (
+                strcmp(
+                    option,
+                    "EX"
+                ) == 0
+            ) {
+
                 if (seconds_str == NULL) {
-                    send(client_fd,"ERR missing expiration time \n",strlen("ERR missing expiration time"),0);
+
+                    send_text(
+                        client_fd,
+                        "ERR missing expiration time\n"
+                    );
+
                     continue;
                 }
-                int seconds = atoi(seconds_str);
 
-                if (seconds <= 0) {
-                    send(client_fd,"ERR invalid expiration time \n",strlen("ERR invalid expiration time"),0);
+
+                char *endptr = NULL;
+
+
+                long seconds =
+                    strtol(
+                        seconds_str,
+                        &endptr,
+                        10
+                    );
+
+
+                if (
+                    endptr == seconds_str ||
+                    *endptr != '\0' ||
+                    seconds <= 0
+                ) {
+
+                    send_text(
+                        client_fd,
+                        "ERR invalid expiration time\n"
+                    );
+
                     continue;
                 }
-                db_set_expire(db,key,value,seconds);
 
-                send(client_fd,"OK\n",3,0);
+
+                time_t expires_at =
+                    time(NULL) + seconds;
+
+
+                char expiration_string[64];
+
+
+                snprintf(
+                    expiration_string,
+                    sizeof(expiration_string),
+                    "%lld",
+                    (long long)expires_at
+                );
+
+
+                /*
+                 * WAL FIRST.
+                 */
+                if (
+                    wal_log_set(
+                        wal,
+                        key,
+                        value,
+                        expiration_string
+                    ) != 0
+                ) {
+
+                    send_text(
+                        client_fd,
+                        "ERR WAL write failed\n"
+                    );
+
+                    continue;
+                }
+
+
+                db_set_expires_at(
+                    db,
+                    key,
+                    value,
+                    expires_at
+                );
+
+
+                send_text(
+                    client_fd,
+                    "OK\n"
+                );
+
                 continue;
             }
-            send(client_fd,"ERR unknown SET option\n",strlen("ERR unknown SET option\n"),0);
+
+
+            send_text(
+                client_fd,
+                "ERR unknown SET option\n"
+            );
+
+            continue;
         }
 
 
         /*
          * GET
          */
-        else if (strcmp(command, "GET") == 0) {
+        else if (
+            strcmp(
+                command,
+                "GET"
+            ) == 0
+        ) {
 
-            char *key = strtok(
-                NULL,
-                " "
-            );
+            char *key =
+                strtok(
+                    NULL,
+                    " "
+                );
 
 
             if (key == NULL) {
 
-                send(
+                send_text(
                     client_fd,
-                    "ERR usage: GET key\n",
-                    21,
-                    0
+                    "ERR usage: GET key\n"
                 );
 
                 continue;
             }
 
 
-            char *value = db_get(
-                db,
-                key
-            );
+            char *value =
+                db_get(
+                    db,
+                    key
+                );
 
 
             if (value == NULL) {
 
-                send(
+                send_text(
                     client_fd,
-                    "(nil)\n",
-                    6,
-                    0
+                    "(nil)\n"
                 );
 
             } else {
@@ -176,47 +332,72 @@ static void client_handler(int client_fd,HashTable *db){
                 );
 
 
-                send(
+                send_text(
                     client_fd,
-                    response,
-                    strlen(response),
-                    0
+                    response
                 );
 
 
                 free(value);
             }
+
+
+            continue;
         }
 
 
         /*
          * DEL
          */
-        else if (strcmp(command, "DEL") == 0) {
+        else if (
+            strcmp(
+                command,
+                "DEL"
+            ) == 0
+        ) {
 
-            char *key = strtok(
-                NULL,
-                " "
-            );
+            char *key =
+                strtok(
+                    NULL,
+                    " "
+                );
 
 
             if (key == NULL) {
 
-                send(
+                send_text(
                     client_fd,
-                    "ERR usage: DEL key\n",
-                    21,
-                    0
+                    "ERR usage: DEL key\n"
                 );
 
                 continue;
             }
 
 
-            int deleted = db_delete(
-                db,
-                key
-            );
+            /*
+             * Log DELETE before applying it.
+             */
+            if (
+                wal_log_delete(
+                    wal,
+                    key
+                ) != 0
+            ) {
+
+                send_text(
+                    client_fd,
+                    "ERR WAL write failed\n"
+                );
+
+                continue;
+            }
+
+
+            int deleted =
+                db_delete(
+                    db,
+                    key
+                );
 
 
             char response[32];
@@ -230,43 +411,49 @@ static void client_handler(int client_fd,HashTable *db){
             );
 
 
-            send(
+            send_text(
                 client_fd,
-                response,
-                strlen(response),
-                0
+                response
             );
+
+
+            continue;
         }
 
 
         /*
          * EXISTS
          */
-        else if (strcmp(command, "EXISTS") == 0) {
+        else if (
+            strcmp(
+                command,
+                "EXISTS"
+            ) == 0
+        ) {
 
-            char *key = strtok(
-                NULL,
-                " "
-            );
+            char *key =
+                strtok(
+                    NULL,
+                    " "
+                );
 
 
             if (key == NULL) {
 
-                send(
+                send_text(
                     client_fd,
-                    "ERR usage: EXISTS key\n",
-                    24,
-                    0
+                    "ERR usage: EXISTS key\n"
                 );
 
                 continue;
             }
 
 
-            int exists = db_exists(
-                db,
-                key
-            );
+            int exists =
+                db_exists(
+                    db,
+                    key
+                );
 
 
             char response[32];
@@ -280,25 +467,29 @@ static void client_handler(int client_fd,HashTable *db){
             );
 
 
-            send(
+            send_text(
                 client_fd,
-                response,
-                strlen(response),
-                0
+                response
             );
+
+
+            continue;
         }
 
 
         /*
          * EXIT
          */
-        else if (strcmp(command, "EXIT") == 0) {
+        else if (
+            strcmp(
+                command,
+                "EXIT"
+            ) == 0
+        ) {
 
-            send(
+            send_text(
                 client_fd,
-                "BYE\n",
-                4,
-                0
+                "BYE\n"
             );
 
             break;
@@ -306,15 +497,13 @@ static void client_handler(int client_fd,HashTable *db){
 
 
         /*
-         * Unknown command
+         * Unknown command.
          */
         else {
 
-            send(
+            send_text(
                 client_fd,
-                "ERR unknown command\n",
-                21,
-                0
+                "ERR unknown command\n"
             );
         }
     }
@@ -323,9 +512,13 @@ static void client_handler(int client_fd,HashTable *db){
     close(client_fd);
 }
 
-static void *worker_function(void *arg){
 
-    ThreadPool *pool = (ThreadPool *)arg;
+static void *worker_function(
+    void *arg
+)
+{
+    ThreadPool *pool =
+        arg;
 
 
     while (1) {
@@ -335,9 +528,6 @@ static void *worker_function(void *arg){
         );
 
 
-        /*
-         * Wait until work exists.
-         */
         while (
             pool->count == 0 &&
             !pool->shutdown
@@ -350,9 +540,6 @@ static void *worker_function(void *arg){
         }
 
 
-        /*
-         * Shutdown when queue is empty.
-         */
         if (
             pool->shutdown &&
             pool->count == 0
@@ -366,24 +553,18 @@ static void *worker_function(void *arg){
         }
 
 
-        /*
-         * Get task.
-         */
         Task task =
             pool->tasks[pool->front];
 
 
         pool->front =
-            (pool->front + 1) % QUEUE_SIZE;
+            (pool->front + 1)
+            % QUEUE_SIZE;
 
 
         pool->count--;
 
 
-        /*
-         * Tell producer that queue
-         * has free space.
-         */
         pthread_cond_signal(
             &pool->not_full
         );
@@ -394,9 +575,6 @@ static void *worker_function(void *arg){
         );
 
 
-        /*
-         * Process client.
-         */
         printf(
             "Worker %lu handling client fd=%d\n",
             (unsigned long)pthread_self(),
@@ -406,7 +584,8 @@ static void *worker_function(void *arg){
 
         client_handler(
             task.client_fd,
-            task.db
+            task.db,
+            task.wal
         );
     }
 
@@ -414,63 +593,179 @@ static void *worker_function(void *arg){
     return NULL;
 }
 
-void thread_pool_init(ThreadPool *pool) {
+
+void thread_pool_init(
+    ThreadPool *pool
+)
+{
     pool->shutdown = 0;
+
     pool->front = 0;
-    pool->count = 0;
+
     pool->rear = 0;
 
-    pthread_mutex_init(&pool->mutex, NULL);
-    pthread_cond_init(&pool->not_empty, NULL);
-    pthread_cond_init(&pool->not_full, NULL);
+    pool->count = 0;
 
-    for (int i = 0; i < THREAD_POOL_SIZE; i++) {
-        if (pthread_create(&pool->workers[i], NULL, worker_function, pool) != 0) {
-            perror("pthread_create failed");
+
+    pthread_mutex_init(
+        &pool->mutex,
+        NULL
+    );
+
+    pthread_cond_init(
+        &pool->not_empty,
+        NULL
+    );
+
+    pthread_cond_init(
+        &pool->not_full,
+        NULL
+    );
+
+
+    for (
+        int i = 0;
+        i < THREAD_POOL_SIZE;
+        i++
+    ) {
+
+        if (
+            pthread_create(
+                &pool->workers[i],
+                NULL,
+                worker_function,
+                pool
+            ) != 0
+        ) {
+
+            perror(
+                "pthread_create"
+            );
+
             exit(EXIT_FAILURE);
         }
     }
-    printf("Thread pool created with %d workers.\n",THREAD_POOL_SIZE);
+
+
+    printf(
+        "Thread pool created with %d workers.\n",
+        THREAD_POOL_SIZE
+    );
 }
 
-void thread_pool_add(ThreadPool *pool,int client_fd,HashTable *db) {
-    pthread_mutex_lock(&pool->mutex);
 
-    while (pool->count == QUEUE_SIZE && !pool->shutdown) {
-        pthread_cond_wait(&pool->not_empty, &pool->mutex);
+void thread_pool_add(
+    ThreadPool *pool,
+    int client_fd,
+    HashTable *db,
+    WAL *wal
+)
+{
+    pthread_mutex_lock(
+        &pool->mutex
+    );
+
+
+    while (
+        pool->count == QUEUE_SIZE &&
+        !pool->shutdown
+    ) {
+
+        pthread_cond_wait(
+            &pool->not_full,
+            &pool->mutex
+        );
     }
 
+
     if (pool->shutdown) {
-        pthread_mutex_unlock(&pool->mutex);
+
+        pthread_mutex_unlock(
+            &pool->mutex
+        );
+
         return;
     }
 
 
-    pool->tasks[pool->rear].client_fd = client_fd;
-    pool->tasks[pool->rear].db = db;
-    pool->rear = (pool->rear + 1) % QUEUE_SIZE;
+    pool->tasks[pool->rear].client_fd =
+        client_fd;
+
+    pool->tasks[pool->rear].db =
+        db;
+
+    pool->tasks[pool->rear].wal =
+        wal;
+
+
+    pool->rear =
+        (pool->rear + 1)
+        % QUEUE_SIZE;
+
+
     pool->count++;
 
-    pthread_cond_signal(&pool->not_empty);
-    pthread_mutex_unlock(&pool->mutex);
+
+    pthread_cond_signal(
+        &pool->not_empty
+    );
+
+
+    pthread_mutex_unlock(
+        &pool->mutex
+    );
 }
 
-void thread_pool_destroy(ThreadPool *pool) {
-    pthread_mutex_lock(&pool->mutex);
+
+void thread_pool_destroy(
+    ThreadPool *pool
+)
+{
+    pthread_mutex_lock(
+        &pool->mutex
+    );
+
 
     pool->shutdown = 1;
 
-    pthread_cond_broadcast(&pool->not_empty);
 
-    pthread_mutex_unlock(&pool->mutex);
+    pthread_cond_broadcast(
+        &pool->not_empty
+    );
 
-    for (int i = 0; i < THREAD_POOL_SIZE; i++) {
-        pthread_join(pool->workers[i], NULL);
+
+    pthread_cond_broadcast(
+        &pool->not_full
+    );
+
+
+    pthread_mutex_unlock(
+        &pool->mutex
+    );
+
+
+    for (
+        int i = 0;
+        i < THREAD_POOL_SIZE;
+        i++
+    ) {
+
+        pthread_join(
+            pool->workers[i],
+            NULL
+        );
     }
 
-    pthread_mutex_destroy(&pool->mutex);
 
-    pthread_cond_destroy(&pool->not_empty);
+    pthread_mutex_destroy(
+        &pool->mutex
+    );
 
-    pthread_cond_destroy(&pool->not_full);
+    pthread_cond_destroy(
+        &pool->not_empty
+    );
+
+    pthread_cond_destroy(
+        &pool->not_full
+    );
 }
