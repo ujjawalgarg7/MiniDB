@@ -1,9 +1,9 @@
-#include "wal.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
+#include <unistd.h>
+
+#include "wal.h"
 
 
 int wal_init(
@@ -399,4 +399,46 @@ void wal_destroy(
     pthread_mutex_destroy(
         &wal->lock
     );
+}
+
+
+int wal_reset(WAL *wal)
+{
+    if (wal == NULL || wal->file == NULL) {
+        return -1;
+    }
+
+    /*
+     * Flush any buffered WAL data.
+     */
+    if (fflush(wal->file) != 0) {
+        return -1;
+    }
+
+    /*
+     * Truncate the WAL file to zero bytes.
+     */
+    int fd = fileno(wal->file);
+
+    if (fd < 0) {
+        return -1;
+    }
+
+    if (ftruncate(fd, 0) != 0) {
+        return -1;
+    }
+
+    /*
+     * Reset the FILE position to the beginning.
+     */
+    if (fseek(wal->file, 0, SEEK_SET) != 0) {
+        return -1;
+    }
+
+    /*
+     * Make sure the stream is ready for subsequent writes.
+     */
+    clearerr(wal->file);
+
+    return 0;
 }

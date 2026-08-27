@@ -163,9 +163,7 @@ static void *expiration_worker(void *arg)
 
 void db_init(HashTable *db)
 {
-    for (unsigned int i = 0;
-         i < TABLE_SIZE;
-         i++) {
+    for (unsigned int i = 0; i < TABLE_SIZE; i++) {
 
         db->buckets[i] = NULL;
 
@@ -175,27 +173,16 @@ void db_init(HashTable *db)
         );
     }
 
+    pthread_mutex_init(&db->expiration_mutex,NULL);
 
-    pthread_mutex_init(
-        &db->expiration_mutex,
-        NULL
-    );
+    pthread_cond_init(&db->expiration_cond,NULL);
 
-    pthread_cond_init(
-        &db->expiration_cond,
-        NULL
-    );
-
+    pthread_mutex_init(&db->persistence_mutex,NULL);
 
     db->expiration_thread_running = 1;
 
 
-    if (pthread_create(
-            &db->expiration_thread,
-            NULL,
-            expiration_worker,
-            db
-        ) != 0) {
+    if (pthread_create(&db->expiration_thread,NULL,expiration_worker,db) != 0) {
 
         perror("pthread_create");
 
@@ -204,44 +191,23 @@ void db_init(HashTable *db)
 }
 
 
-void db_set(
-    HashTable *db,
-    const char *key,
-    const char *value
-)
-{
-    db_set_expires_at(
-        db,
-        key,
-        value,
-        0
-    );
+void db_set(HashTable *db,const char *key,const char *value){
+    db_set_expires_at(db,key,value,0);
 }
 
 
-void db_set_expires_at(
-    HashTable *db,
-    const char *key,
-    const char *value,
-    time_t expires_at
-)
-{
+void db_set_expires_at(HashTable *db,const char *key,const char *value,time_t expires_at){
     unsigned int hash =
         hash_key(key);
 
 
-    pthread_rwlock_wrlock(
-        &db->locks[hash]
-    );
+    pthread_rwlock_wrlock(&db->locks[hash]);
 
 
     /*
      * Remove expired version first.
      */
-    remove_expired_entries(
-        db,
-        hash
-    );
+    remove_expired_entries(db,hash);
 
 
     Entry *current =
@@ -463,21 +429,23 @@ int db_exists(
     unsigned int hash =
         hash_key(key);
 
-
     pthread_rwlock_wrlock(
         &db->locks[hash]
     );
 
-
+    /*
+     * Remove expired entries first.
+     *
+     * We need a write lock because this function
+     * may modify the bucket by removing expired entries.
+     */
     remove_expired_entries(
         db,
         hash
     );
 
-
     Entry *current =
         db->buckets[hash];
-
 
     while (current != NULL) {
 
@@ -486,16 +454,19 @@ int db_exists(
                 key
             ) == 0) {
 
+            /*
+             * Key exists and has not expired.
+             */
             pthread_rwlock_unlock(
                 &db->locks[hash]
             );
 
             return 1;
-        }
+            }
 
-        current = current->next;
+        current =
+            current->next;
     }
-
 
     pthread_rwlock_unlock(
         &db->locks[hash]
@@ -581,4 +552,6 @@ void db_destroy(HashTable *db)
     pthread_cond_destroy(
         &db->expiration_cond
     );
+
+    pthread_mutex_destroy(&db->persistence_mutex);
 }

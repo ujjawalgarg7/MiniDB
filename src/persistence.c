@@ -102,11 +102,11 @@ int db_save(
 
 int db_load(
     HashTable *db,
-    const char *filename
+    const char *snapshot_file
 )
 {
     if (db == NULL ||
-        filename == NULL) {
+        snapshot_file == NULL) {
 
         return -1;
     }
@@ -114,7 +114,7 @@ int db_load(
 
     FILE *file =
         fopen(
-            filename,
+            snapshot_file,
             "r"
         );
 
@@ -169,4 +169,32 @@ int db_load(
     fclose(file);
 
     return 0;
+}
+
+int db_compact(HashTable *db,WAL *wal,const char *snapshot_file){
+
+    if (db == NULL || wal == NULL || snapshot_file == NULL) {
+        return -1;
+    }
+
+    pthread_mutex_lock(&db->persistence_mutex);
+
+
+    int result =
+        db_save(db,snapshot_file);
+
+
+    if (result == 0) {
+
+        result =
+            wal_reset(wal);
+    }
+
+
+    pthread_mutex_unlock(
+        &db->persistence_mutex
+    );
+
+
+    return result;
 }

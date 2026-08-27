@@ -62,5 +62,4 @@ void thread_pool_destroy(
     ThreadPool *pool
 );
 
-
 #endif

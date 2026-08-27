@@ -53,4 +53,7 @@ void wal_destroy(
     WAL *wal
 );
 
+
+int wal_reset(WAL *wal);
+
 #endif

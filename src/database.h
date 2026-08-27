@@ -22,23 +22,15 @@ typedef struct Entry {
 
 typedef struct {
     Entry *buckets[TABLE_SIZE];
-
-    /*
-     * One lock per bucket.
-     */
     pthread_rwlock_t locks[TABLE_SIZE];
 
-    /*
-     * Background expiration thread.
-     */
     pthread_t expiration_thread;
-
     int expiration_thread_running;
 
     pthread_mutex_t expiration_mutex;
-
     pthread_cond_t expiration_cond;
 
+    pthread_mutex_t persistence_mutex;
 } HashTable;
 
 

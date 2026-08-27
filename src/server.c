@@ -2,6 +2,8 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -9,9 +11,18 @@
 
 #include "thread_pool.h"
 
-
 #define SERVER_PORT 8080
 #define BACKLOG 64
+#define POLL_TIMEOUT_MS 500
+
+static volatile sig_atomic_t server_running = 1;
+static int server_fd = -1;
+
+
+void server_stop(void)
+{
+    server_running = 0;
+}
 
 
 int server_start(
@@ -19,24 +30,22 @@ int server_start(
     WAL *wal
 )
 {
-    int server_fd =
+    server_running = 1;
+
+    server_fd =
         socket(
             AF_INET,
             SOCK_STREAM,
             0
         );
 
-
     if (server_fd < 0) {
-
         perror("socket");
-
         return -1;
     }
 
 
     int option = 1;
-
 
     if (
         setsockopt(
@@ -47,17 +56,16 @@ int server_start(
             sizeof(option)
         ) < 0
     ) {
-
         perror("setsockopt");
 
         close(server_fd);
+        server_fd = -1;
 
         return -1;
     }
 
 
     struct sockaddr_in server_addr;
-
 
     memset(
         &server_addr,
@@ -83,10 +91,10 @@ int server_start(
             sizeof(server_addr)
         ) < 0
     ) {
-
         perror("bind");
 
         close(server_fd);
+        server_fd = -1;
 
         return -1;
     }
@@ -98,10 +106,10 @@ int server_start(
             BACKLOG
         ) < 0
     ) {
-
         perror("listen");
 
         close(server_fd);
+        server_fd = -1;
 
         return -1;
     }
@@ -109,25 +117,75 @@ int server_start(
 
     ThreadPool pool;
 
-
     thread_pool_init(
         &pool
     );
-
 
     printf(
         "Server listening on port %d\n",
         SERVER_PORT
     );
 
+    while (server_running) {
 
-    while (1) {
+        struct pollfd poll_fd;
+
+        poll_fd.fd = server_fd;
+        poll_fd.events = POLLIN;
+        poll_fd.revents = 0;
+
+        int poll_result =
+            poll(
+                &poll_fd,
+                1,
+                POLL_TIMEOUT_MS
+            );
+
+        if (poll_result == 0) {
+            continue;
+        }
+
+        if (poll_result < 0) {
+
+            if (!server_running) {
+                break;
+            }
+
+            perror("poll");
+            continue;
+        }
+
+        if (!server_running) {
+            break;
+        }
+
+        if (
+            poll_fd.revents &
+            (
+                POLLERR |
+                POLLHUP |
+                POLLNVAL
+            )
+        ) {
+
+            if (server_running) {
+                fprintf(
+                    stderr,
+                    "Server socket error.\n"
+                );
+            }
+
+            break;
+        }
+
+        if (!(poll_fd.revents & POLLIN)) {
+            continue;
+        }
 
         struct sockaddr_in client_addr;
 
         socklen_t client_len =
             sizeof(client_addr);
-
 
         int client_fd =
             accept(
@@ -136,20 +194,25 @@ int server_start(
                 &client_len
             );
 
-
         if (client_fd < 0) {
 
-            perror("accept");
+            if (!server_running) {
+                break;
+            }
 
+            perror("accept");
             continue;
         }
 
+        if (!server_running) {
+            close(client_fd);
+            break;
+        }
 
         printf(
             "Client connected: fd=%d\n",
             client_fd
         );
-
 
         thread_pool_add(
             &pool,
@@ -160,16 +223,31 @@ int server_start(
     }
 
 
-    /*
-     * Normally unreachable.
-     */
+    printf(
+    "Stopping server...\n"
+);
+
+    if (server_fd >= 0) {
+
+        shutdown(
+            server_fd,
+            SHUT_RDWR
+        );
+
+        close(
+            server_fd
+        );
+
+        server_fd = -1;
+    }
+
     thread_pool_destroy(
         &pool
     );
 
-
-    close(server_fd);
-
+    printf(
+        "Server stopped.\n"
+    );
 
     return 0;
 }

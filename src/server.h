@@ -10,5 +10,5 @@ int server_start(
     WAL *wal
 );
 
-
+void server_stop(void);
 #endif
