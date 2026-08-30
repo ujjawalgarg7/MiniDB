@@ -555,3 +555,54 @@ void db_destroy(HashTable *db)
 
     pthread_mutex_destroy(&db->persistence_mutex);
 }
+
+int db_flush(HashTable *db) {
+    if (db == NULL) {
+        return -1;
+    }
+
+    for (unsigned int i = 0; i < TABLE_SIZE; ++i) {
+        pthread_rwlock_wrlock(& db->locks[i]);
+
+        Entry *current = db->buckets[i];
+
+        while (current != NULL) {
+            Entry *next = current->next;
+
+            free(current->key);
+            free(current->value);
+            free(current);
+
+            current = next;
+        }
+        db->buckets[i] = NULL;
+
+        pthread_rwlock_unlock(&db->locks[i]);
+    }
+    return 0;
+}
+
+int db_count_keys(HashTable *db) {
+    if (db == NULL) {
+        return -1;
+    }
+
+    int count = 0;
+
+    for (unsigned int i = 0; i < TABLE_SIZE; ++i) {
+        pthread_rwlock_rdlock(& db->locks[i]);
+
+        Entry *current = db->buckets[i];
+
+        while (current != NULL) {
+            if (current->expires_at == 0 ||
+                current->expires_at > time(NULL)) {
+                count++;
+            }
+            current = current->next;
+        }
+        pthread_rwlock_unlock(& db->locks[i]);
+    }
+
+    return count;
+}

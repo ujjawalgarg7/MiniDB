@@ -293,6 +293,18 @@ int wal_replay(
             );
         }
 
+        else if (
+            strcmp(
+            line,
+            "FLUSHDB"
+            ) == 0
+        ) {
+
+            db_flush(
+                db
+            );
+        }
+
 
         /*
          * DELETE
@@ -440,5 +452,29 @@ int wal_reset(WAL *wal)
      */
     clearerr(wal->file);
 
+    return 0;
+}
+
+int wal_log_flush(WAL *wal) {
+    if (wal == NULL || wal->file == NULL) {
+        return -1;
+    }
+
+    pthread_mutex_lock(&wal->lock);
+
+    int result =
+        fprintf(
+            wal->file,
+            "FLUSHDB\n"
+        );
+
+    int flush_result =
+        fflush(wal->file);
+
+    pthread_mutex_unlock(&wal->lock);
+
+    if (result < 0 || flush_result != 0) {
+        return -1;
+    }
     return 0;
 }

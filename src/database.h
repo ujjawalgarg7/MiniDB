@@ -61,6 +61,10 @@ int db_exists(
     HashTable *db,
     const char *key
 );
+int db_flush(
+    HashTable *db
+);
+
 
 
 /*
@@ -74,5 +78,10 @@ void db_set_expires_at(
     const char *value,
     time_t expires_at
 );
+
+int db_count_keys(
+    HashTable *db
+);
+
 
 #endif

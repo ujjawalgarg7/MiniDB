@@ -54,6 +54,12 @@ void wal_destroy(
 );
 
 
-int wal_reset(WAL *wal);
+int wal_reset(
+    WAL *wal
+);
+
+int wal_log_flush(
+    WAL *wal
+);
 
 #endif
