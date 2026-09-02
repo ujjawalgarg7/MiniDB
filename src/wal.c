@@ -318,32 +318,32 @@ int wal_replay(
 }
 
 
-int wal_flush(
-    WAL *wal
-)
+int wal_flush(WAL *wal)
 {
-    if (wal == NULL ||
-        wal->file == NULL) {
-
+    if (wal == NULL || wal->file == NULL) {
         return -1;
     }
 
+    pthread_mutex_lock(&wal->lock);
 
-    pthread_mutex_lock(
-        &wal->lock
-    );
+    int result = fflush(wal->file);
+    int sync_result = 0;
 
+    if (result == 0) {
+        int fd = fileno(wal->file);
 
-    int result =
-        fflush(wal->file);
+        if (fd < 0 || fsync(fd) != 0) {
+            sync_result = -1;
+        }
+    }
 
+    pthread_mutex_unlock(&wal->lock);
 
-    pthread_mutex_unlock(
-        &wal->lock
-    );
+    if (result != 0 || sync_result != 0) {
+        return -1;
+    }
 
-
-    return result == 0 ? 0 : -1;
+    return 0;
 }
 
 

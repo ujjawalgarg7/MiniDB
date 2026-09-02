@@ -34,6 +34,9 @@ typedef struct {
 
     int shutdown;
 
+    int active_client_fds[THREAD_POOL_SIZE];
+    int active_client_count;
+
     pthread_mutex_t mutex;
 
     pthread_cond_t not_empty;
@@ -59,6 +62,20 @@ void thread_pool_add(
 
 
 void thread_pool_destroy(
+    ThreadPool *pool
+);
+
+void thread_pool_register_client(
+    ThreadPool *pool,
+    int client_fd
+);
+
+void thread_pool_unregister_client(
+    ThreadPool *pool,
+    int client_fd
+);
+
+void thread_pool_shutdown_clients(
     ThreadPool *pool
 );
 

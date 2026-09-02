@@ -241,6 +241,14 @@ int server_start(
         server_fd = -1;
     }
 
+    /*
+     * Wake any workers currently blocked
+     * on active client sockets.
+     */
+    thread_pool_shutdown_clients(
+        &pool
+    );
+
     thread_pool_destroy(
         &pool
     );

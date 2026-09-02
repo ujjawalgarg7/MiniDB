@@ -17,21 +17,39 @@
 #define CLIENT_BUFFER_SIZE 8192
 
 
-static void send_text(
-    int client_fd,
-    const char *text
-)
+static int send_text(int client_fd, const char *text)
 {
     if (text == NULL) {
-        return;
+        return -1;
     }
 
-    send(
-        client_fd,
-        text,
-        strlen(text),
-        0
-    );
+    size_t total = strlen(text);
+    size_t sent = 0;
+
+    while (sent < total) {
+        ssize_t n = send(
+            client_fd,
+            text + sent,
+            total - sent,
+            MSG_NOSIGNAL
+        );
+
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            return -1;
+        }
+
+        if (n == 0) {
+            return -1;
+        }
+
+        sent += (size_t)n;
+    }
+
+    return 0;
 }
 
 
@@ -1409,11 +1427,21 @@ static void *worker_function(
         );
 
 
+        thread_pool_register_client(
+    pool,
+    task.client_fd
+);
+
         client_handler(
             task.client_fd,
             task.db,
             task.wal,
             pool
+        );
+
+        thread_pool_unregister_client(
+            pool,
+            task.client_fd
         );
     }
 
@@ -1427,64 +1455,28 @@ static void *worker_function(
  * Initialize thread pool
  * ============================================================
  */
-void thread_pool_init(
-    ThreadPool *pool
-)
+void thread_pool_init(ThreadPool *pool)
 {
-    pool->shutdown =
-        0;
+    memset(pool, 0, sizeof(ThreadPool));
 
-    pool->front =
-        0;
+    pool->front = 0;
+    pool->rear = 0;
+    pool->count = 0;
+    pool->shutdown = 0;
+    pool->active_client_count = 0;
 
-    pool->rear =
-        0;
+    pthread_mutex_init(&pool->mutex, NULL);
+    pthread_cond_init(&pool->not_empty, NULL);
+    pthread_cond_init(&pool->not_full, NULL);
 
-    pool->count =
-        0;
-
-
-    pthread_mutex_init(
-        &pool->mutex,
-        NULL
-    );
-
-
-    pthread_cond_init(
-        &pool->not_empty,
-        NULL
-    );
-
-
-    pthread_cond_init(
-        &pool->not_full,
-        NULL
-    );
-
-
-    for (
-        int i = 0;
-        i < THREAD_POOL_SIZE;
-        i++
-    ) {
-
-        if (
-            pthread_create(
-                &pool->workers[i],
-                NULL,
-                worker_function,
-                pool
-            ) != 0
-        ) {
-
-            perror(
-                "pthread_create"
-            );
-
-            exit(EXIT_FAILURE);
-        }
+    for (int i = 0; i < THREAD_POOL_SIZE; i++) {
+        pthread_create(
+            &pool->workers[i],
+            NULL,
+            worker_function,
+            pool
+        );
     }
-
 
     printf(
         "Thread pool created with %d workers.\n",
@@ -1646,4 +1638,78 @@ void thread_pool_destroy(
     pthread_cond_destroy(
         &pool->not_full
     );
+}
+
+void thread_pool_register_client(
+    ThreadPool *pool,
+    int client_fd
+)
+{
+    if (pool == NULL || client_fd < 0) {
+        return;
+    }
+
+    pthread_mutex_lock(&pool->mutex);
+
+    if (pool->active_client_count < THREAD_POOL_SIZE) {
+        pool->active_client_fds[
+            pool->active_client_count
+        ] = client_fd;
+
+        pool->active_client_count++;
+    }
+
+    pthread_mutex_unlock(&pool->mutex);
+}
+
+
+void thread_pool_unregister_client(
+    ThreadPool *pool,
+    int client_fd
+)
+{
+    if (pool == NULL || client_fd < 0) {
+        return;
+    }
+
+    pthread_mutex_lock(&pool->mutex);
+
+    for (int i = 0; i < pool->active_client_count; i++) {
+
+        if (pool->active_client_fds[i] == client_fd) {
+
+            pool->active_client_fds[i] =
+                pool->active_client_fds[
+                    pool->active_client_count - 1
+                ];
+
+            pool->active_client_count--;
+
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&pool->mutex);
+}
+
+
+void thread_pool_shutdown_clients(
+    ThreadPool *pool
+)
+{
+    if (pool == NULL) {
+        return;
+    }
+
+    pthread_mutex_lock(&pool->mutex);
+
+    for (int i = 0; i < pool->active_client_count; i++) {
+
+        shutdown(
+            pool->active_client_fds[i],
+            SHUT_RDWR
+        );
+    }
+
+    pthread_mutex_unlock(&pool->mutex);
 }
