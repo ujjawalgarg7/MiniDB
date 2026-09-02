@@ -321,44 +321,52 @@ int db_compact(
         snapshot_file == NULL) {
 
         return -1;
-    }
-
+        }
 
     /*
-     * Serialize persistence operations.
+     * Serialize the entire compaction operation
+     * with database mutations.
      */
     pthread_mutex_lock(
         &db->persistence_mutex
     );
 
+    /*
+     * Prevent WAL writes while the snapshot
+     * and WAL rotation are performed.
+     */
+    pthread_mutex_lock(
+        &wal->lock
+    );
 
+    /*
+     * Create and atomically install the snapshot
+     * while both database persistence and WAL
+     * operations are blocked.
+     */
     int result =
         db_save(
             db,
             snapshot_file
         );
 
-
     /*
-     * Only reset the WAL after the snapshot
-     * has been successfully written and atomically
-     * installed.
+     * Only rotate the WAL if the snapshot was
+     * successfully installed.
      */
     if (result == 0) {
 
-        pthread_mutex_lock(&wal->lock);
-
         result =
             wal_reset(wal);
-
-        pthread_mutex_unlock(&wal->lock);
     }
 
+    pthread_mutex_unlock(
+        &wal->lock
+    );
 
     pthread_mutex_unlock(
         &db->persistence_mutex
     );
-
 
     return result;
 }

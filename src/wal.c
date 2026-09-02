@@ -63,99 +63,67 @@ int wal_init(
 }
 
 
-int wal_log_set(
-    WAL *wal,
-    const char *key,
-    const char *value,
-    const char *expires_at
-)
+int wal_log_set(WAL *wal, const char *key, const char *value, const char *expires_at)
 {
-    if (wal == NULL ||
-        wal->file == NULL ||
-        key == NULL ||
-        value == NULL ||
-        expires_at == NULL) {
-
+    if (wal == NULL || wal->file == NULL ||
+        key == NULL || value == NULL || expires_at == NULL) {
         return -1;
+        }
+
+    pthread_mutex_lock(&wal->lock);
+
+    int result = fprintf(wal->file, "SET\t%s\t%s\t%s\n",
+                         key, value, expires_at);
+
+    int flush_result = fflush(wal->file);
+
+    int sync_result = 0;
+
+    if (result >= 0 && flush_result == 0) {
+        int fd = fileno(wal->file);
+
+        if (fd < 0 || fsync(fd) != 0) {
+            sync_result = -1;
+        }
     }
 
+    pthread_mutex_unlock(&wal->lock);
 
-    pthread_mutex_lock(
-        &wal->lock
-    );
-
-
-    int result =
-        fprintf(
-            wal->file,
-            "SET\t%s\t%s\t%s\n",
-            key,
-            value,
-            expires_at
-        );
-
-
-    int flush_result =
-        fflush(wal->file);
-
-
-    pthread_mutex_unlock(
-        &wal->lock
-    );
-
-
-    if (result < 0 ||
-        flush_result != 0) {
-
+    if (result < 0 || flush_result != 0 || sync_result != 0) {
         return -1;
     }
-
 
     return 0;
 }
 
 
-int wal_log_delete(
-    WAL *wal,
-    const char *key
-)
+int wal_log_delete(WAL *wal, const char *key)
 {
-    if (wal == NULL ||
-        wal->file == NULL ||
-        key == NULL) {
-
+    if (wal == NULL || wal->file == NULL || key == NULL) {
         return -1;
     }
 
+    pthread_mutex_lock(&wal->lock);
 
-    pthread_mutex_lock(
-        &wal->lock
-    );
+    int result = fprintf(wal->file, "DEL\t%s\n", key);
 
+    int flush_result = fflush(wal->file);
 
-    int result =
-        fprintf(
-            wal->file,
-            "DEL\t%s\n",
-            key
-        );
+    int sync_result = 0;
 
+    if (result >= 0 && flush_result == 0) {
+        int fd = fileno(wal->file);
 
-    int flush_result =
-        fflush(wal->file);
-
-
-    pthread_mutex_unlock(
-        &wal->lock
-    );
-
-
-    if (result < 0 ||
-        flush_result != 0) {
-
-        return -1;
+        if (fd < 0 || fsync(fd) != 0) {
+            sync_result = -1;
+        }
     }
 
+    pthread_mutex_unlock(&wal->lock);
+
+    if (result < 0 || flush_result != 0 || sync_result != 0) {
+        return -1;
+    }
 
     return 0;
 }
@@ -524,34 +492,31 @@ int wal_reset(WAL *wal)
 
 int wal_log_flush(WAL *wal)
 {
-    if (wal == NULL ||
-        wal->file == NULL) {
-
+    if (wal == NULL || wal->file == NULL) {
         return -1;
+    }
+
+    pthread_mutex_lock(&wal->lock);
+
+    int result = fprintf(wal->file, "FLUSHDB\n");
+
+    int flush_result = fflush(wal->file);
+
+    int sync_result = 0;
+
+    if (result >= 0 && flush_result == 0) {
+        int fd = fileno(wal->file);
+
+        if (fd < 0 || fsync(fd) != 0) {
+            sync_result = -1;
         }
+    }
 
-    pthread_mutex_lock(
-        &wal->lock
-    );
+    pthread_mutex_unlock(&wal->lock);
 
-    int result =
-        fprintf(
-            wal->file,
-            "FLUSHDB\n"
-        );
-
-    int flush_result =
-        fflush(wal->file);
-
-    pthread_mutex_unlock(
-        &wal->lock
-    );
-
-    if (result < 0 ||
-        flush_result != 0) {
-
+    if (result < 0 || flush_result != 0 || sync_result != 0) {
         return -1;
-        }
+    }
 
     return 0;
 }
