@@ -1,9 +1,13 @@
 #include "persistence.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 
 int db_save(
@@ -18,16 +22,44 @@ int db_save(
     }
 
 
+    /*
+     * Write the snapshot to a temporary file first.
+     * The existing snapshot remains untouched until
+     * the new file has been completely written.
+     */
+    char temp_filename[4096];
+
+    int written =
+        snprintf(
+            temp_filename,
+            sizeof(temp_filename),
+            "%s.tmp",
+            filename
+        );
+
+
+    if (written < 0 ||
+        (size_t)written >= sizeof(temp_filename)) {
+
+        fprintf(
+            stderr,
+            "Snapshot filename is too long.\n"
+        );
+
+        return -1;
+    }
+
+
     FILE *file =
         fopen(
-            filename,
+            temp_filename,
             "w"
         );
 
 
     if (file == NULL) {
 
-        perror("fopen");
+        perror("fopen snapshot");
 
         return -1;
     }
@@ -45,6 +77,9 @@ int db_save(
             &db->locks[i]
         );
     }
+
+
+    int save_failed = 0;
 
 
     for (unsigned int i = 0;
@@ -66,22 +101,37 @@ int db_save(
                 current->expires_at > time(NULL)
             ) {
 
-                fprintf(
-                    file,
-                    "%s\t%s\t%ld\n",
-                    current->key,
-                    current->value,
-                    (long)current->expires_at
-                );
+                if (
+                    fprintf(
+                        file,
+                        "%s\t%s\t%ld\n",
+                        current->key,
+                        current->value,
+                        (long)current->expires_at
+                    ) < 0
+                ) {
+
+                    save_failed = 1;
+                    break;
+                }
             }
 
 
             current =
                 current->next;
         }
+
+
+        if (save_failed) {
+            break;
+        }
     }
 
 
+    /*
+     * Release database locks before doing
+     * filesystem synchronization.
+     */
     for (unsigned int i = 0;
          i < TABLE_SIZE;
          i++) {
@@ -92,11 +142,99 @@ int db_save(
     }
 
 
-    int result =
+    if (save_failed) {
+
+        fprintf(
+            stderr,
+            "Failed while writing snapshot.\n"
+        );
+
         fclose(file);
+        unlink(temp_filename);
+
+        return -1;
+    }
 
 
-    return result == 0 ? 0 : -1;
+    /*
+     * Push stdio buffers into the kernel.
+     */
+    if (fflush(file) != 0) {
+
+        perror("fflush snapshot");
+
+        fclose(file);
+        unlink(temp_filename);
+
+        return -1;
+    }
+
+
+    /*
+     * Get the underlying file descriptor so
+     * the snapshot can be synchronized to disk.
+     */
+    int fd =
+        fileno(file);
+
+
+    if (fd < 0) {
+
+        perror("fileno snapshot");
+
+        fclose(file);
+        unlink(temp_filename);
+
+        return -1;
+    }
+
+
+    if (fsync(fd) != 0) {
+
+        perror("fsync snapshot");
+
+        fclose(file);
+        unlink(temp_filename);
+
+        return -1;
+    }
+
+
+    /*
+     * Close the temporary snapshot before
+     * atomically replacing the real snapshot.
+     */
+    if (fclose(file) != 0) {
+
+        perror("fclose snapshot");
+
+        unlink(temp_filename);
+
+        return -1;
+    }
+
+
+    /*
+     * rename() replaces the destination atomically
+     * when source and destination are on the same
+     * filesystem.
+     */
+    if (
+        rename(
+            temp_filename,
+            filename
+        ) != 0
+    ) {
+
+        perror("rename snapshot");
+
+        unlink(temp_filename);
+
+        return -1;
+    }
+
+
+    return 0;
 }
 
 
@@ -171,19 +309,41 @@ int db_load(
     return 0;
 }
 
-int db_compact(HashTable *db,WAL *wal,const char *snapshot_file){
 
-    if (db == NULL || wal == NULL || snapshot_file == NULL) {
+int db_compact(
+    HashTable *db,
+    WAL *wal,
+    const char *snapshot_file
+)
+{
+    if (db == NULL ||
+        wal == NULL ||
+        snapshot_file == NULL) {
+
         return -1;
     }
 
-    pthread_mutex_lock(&db->persistence_mutex);
+
+    /*
+     * Serialize persistence operations.
+     */
+    pthread_mutex_lock(
+        &db->persistence_mutex
+    );
 
 
     int result =
-        db_save(db,snapshot_file);
+        db_save(
+            db,
+            snapshot_file
+        );
 
 
+    /*
+     * Only reset the WAL after the snapshot
+     * has been successfully written and atomically
+     * installed.
+     */
     if (result == 0) {
 
         result =
