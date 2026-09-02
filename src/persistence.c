@@ -346,8 +346,12 @@ int db_compact(
      */
     if (result == 0) {
 
+        pthread_mutex_lock(&wal->lock);
+
         result =
             wal_reset(wal);
+
+        pthread_mutex_unlock(&wal->lock);
     }
 
 

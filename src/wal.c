@@ -416,51 +416,123 @@ void wal_destroy(
 
 int wal_reset(WAL *wal)
 {
-    if (wal == NULL || wal->file == NULL) {
+    if (wal == NULL ||
+        wal->file == NULL) {
+
+        return -1;
+        }
+
+    /*
+     * WAL must already be protected by wal->lock
+     * when this function is called.
+     *
+     * Write a completely new empty WAL to a
+     * temporary file first.
+     */
+    char temp_filename[sizeof(wal->filename) + 5];
+
+    int written =
+        snprintf(
+            temp_filename,
+            sizeof(temp_filename),
+            "%s.tmp",
+            wal->filename
+        );
+
+    if (written < 0 ||
+        (size_t)written >= sizeof(temp_filename)) {
+
+        return -1;
+        }
+
+    FILE *temp_file =
+        fopen(
+            temp_filename,
+            "w"
+        );
+
+    if (temp_file == NULL) {
+        perror("fopen WAL temporary");
         return -1;
     }
 
     /*
-     * Flush any buffered WAL data.
+     * Make the empty WAL durable before replacing
+     * the existing WAL.
      */
-    if (fflush(wal->file) != 0) {
+    if (fflush(temp_file) != 0) {
+        fclose(temp_file);
+        unlink(temp_filename);
+        return -1;
+    }
+
+    int temp_fd =
+        fileno(temp_file);
+
+    if (temp_fd < 0) {
+        fclose(temp_file);
+        unlink(temp_filename);
+        return -1;
+    }
+
+    if (fsync(temp_fd) != 0) {
+        perror("fsync WAL temporary");
+        fclose(temp_file);
+        unlink(temp_filename);
+        return -1;
+    }
+
+    if (fclose(temp_file) != 0) {
+        unlink(temp_filename);
         return -1;
     }
 
     /*
-     * Truncate the WAL file to zero bytes.
+     * Atomically replace the old WAL.
      */
-    int fd = fileno(wal->file);
-
-    if (fd < 0) {
-        return -1;
-    }
-
-    if (ftruncate(fd, 0) != 0) {
+    if (rename(temp_filename, wal->filename) != 0) {
+        perror("rename WAL");
+        unlink(temp_filename);
         return -1;
     }
 
     /*
-     * Reset the FILE position to the beginning.
+     * The existing FILE * still refers to the old
+     * inode, so close it and reopen the newly
+     * installed WAL.
      */
-    if (fseek(wal->file, 0, SEEK_SET) != 0) {
+    if (fclose(wal->file) != 0) {
+        wal->file = NULL;
         return -1;
     }
 
-    /*
-     * Make sure the stream is ready for subsequent writes.
-     */
-    clearerr(wal->file);
+    wal->file =
+        fopen(
+            wal->filename,
+            "a+"
+        );
+
+    if (wal->file == NULL) {
+        perror("reopen WAL");
+        return -1;
+    }
 
     return 0;
 }
 
-int wal_log_flush(WAL *wal) {
-    if (wal == NULL || wal->file == NULL) {
-        return -1;
-    }
 
-    pthread_mutex_lock(&wal->lock);
+
+int wal_log_flush(WAL *wal)
+{
+    if (wal == NULL ||
+        wal->file == NULL) {
+
+        return -1;
+        }
+
+    pthread_mutex_lock(
+        &wal->lock
+    );
 
     int result =
         fprintf(
@@ -471,10 +543,15 @@ int wal_log_flush(WAL *wal) {
     int flush_result =
         fflush(wal->file);
 
-    pthread_mutex_unlock(&wal->lock);
+    pthread_mutex_unlock(
+        &wal->lock
+    );
 
-    if (result < 0 || flush_result != 0) {
+    if (result < 0 ||
+        flush_result != 0) {
+
         return -1;
-    }
+        }
+
     return 0;
 }
