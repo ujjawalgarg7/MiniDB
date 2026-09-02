@@ -1,0 +1,23 @@
+# CLion / CMake build files
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+CTestTestfile.cmake
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Runtime/generated MiniDB files
+minidb.snapshot
+minidb.wal
+
+# IDE files
+.idea/
+.vscode/
+
+# Executables
+MiniDB
+*.o
+
+# Stress-test output
+stress_client_*.out

@@ -110,6 +110,23 @@ target_link_libraries(
         Threads::Threads
 )
 
+enable_testing()
+
+add_test(NAME wal_test
+        COMMAND wal_test)
+
+add_test(NAME persistence_test
+        COMMAND persistence_test)
+
+add_test(NAME expiration_test
+        COMMAND expiration_test)
+
+add_test(NAME expiration_stress_test
+        COMMAND expiration_stress_test)
+
+add_test(NAME compaction_test
+        COMMAND compaction_test)
+
 
 # ============================================================
 # Compaction test
