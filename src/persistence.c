@@ -9,6 +9,55 @@
 #include <time.h>
 #include <unistd.h>
 
+static int fsync_parent_directory(const char *path)
+{
+    if (path == NULL) {
+        return -1;
+    }
+
+    char directory[4096];
+
+    const char *last_slash = strrchr(path, '/');
+
+    if (last_slash == NULL) {
+        strcpy(directory, ".");
+    } else {
+        size_t length = (size_t)(last_slash - path);
+
+        if (length == 0) {
+            strcpy(directory, "/");
+        } else {
+            if (length >= sizeof(directory)) {
+                return -1;
+            }
+
+            memcpy(directory, path, length);
+            directory[length] = '\0';
+        }
+    }
+
+    int directory_fd =
+        open(
+            directory,
+            O_RDONLY | O_DIRECTORY
+        );
+
+    if (directory_fd < 0) {
+        perror("open parent directory");
+        return -1;
+    }
+
+    int result = fsync(directory_fd);
+
+    if (result != 0) {
+        perror("fsync parent directory");
+    }
+
+    close(directory_fd);
+
+    return result;
+}
+
 
 int db_save(
     HashTable *db,
@@ -220,15 +269,29 @@ int db_save(
      * filesystem.
      */
     if (
-        rename(
-            temp_filename,
-            filename
-        ) != 0
-    ) {
+    rename(
+        temp_filename,
+        filename
+    ) != 0
+) {
 
         perror("rename snapshot");
 
         unlink(temp_filename);
+
+        return -1;
+}
+
+
+    /*
+     * Make the directory entry change durable.
+     */
+    if (fsync_parent_directory(filename) != 0) {
+
+        fprintf(
+            stderr,
+            "Failed to synchronize snapshot directory.\n"
+        );
 
         return -1;
     }

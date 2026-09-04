@@ -108,6 +108,24 @@ static char *trim_spaces(
     return str;
 }
 
+/*
+ * Return 1 if there are no more non-space arguments.
+ */
+static int no_more_arguments(
+    char *rest
+)
+{
+    if (rest == NULL) {
+        return 1;
+    }
+
+    while (*rest == ' ') {
+        rest++;
+    }
+
+    return *rest == '\0';
+}
+
 
 /*
  * Process exactly ONE complete command line.
@@ -194,11 +212,30 @@ static int process_command(
      * ========================================================
      */
     if (
-        strcmp(
-            command,
-            "PING"
-        ) == 0
-    ) {
+    strcmp(
+        command,
+        "PING"
+    ) == 0
+) {
+
+        char *extra =
+            strtok_r(
+                NULL,
+                "",
+                &saveptr
+            );
+
+
+        if (!no_more_arguments(extra)) {
+
+            send_text(
+                client_fd,
+                "ERR usage: PING\n"
+            );
+
+            return 0;
+        }
+
 
         send_text(
             client_fd,
@@ -206,7 +243,7 @@ static int process_command(
         );
 
         return 0;
-    }
+}
 
 
     /*
@@ -594,12 +631,11 @@ static int process_command(
     ) {
 
         char *key =
-            strtok_r(
-                NULL,
-                " ",
-                &saveptr
-            );
-
+    strtok_r(
+        NULL,
+        " ",
+        &saveptr
+    );
 
         if (key == NULL) {
 
@@ -609,6 +645,29 @@ static int process_command(
             );
 
             return 0;
+        }
+
+        char *extra = strtok_r(
+            NULL,
+            "",
+            &saveptr
+        );
+
+        if (extra != NULL) {
+
+            while (*extra == ' ') {
+                extra++;
+            }
+
+            if (*extra != '\0') {
+
+                send_text(
+                    client_fd,
+                    "ERR usage: GET key\n"
+                );
+
+                return 0;
+            }
         }
 
 
@@ -681,6 +740,29 @@ static int process_command(
             );
 
             return 0;
+        }
+        char *extra =
+    strtok_r(
+        NULL,
+        "",
+        &saveptr
+    );
+
+        if (extra != NULL) {
+
+            while (*extra == ' ') {
+                extra++;
+            }
+
+            if (!no_more_arguments(extra)) {
+
+                send_text(
+                    client_fd,
+                    "ERR usage: DEL key\n"
+                );
+
+                return 0;
+            }
         }
 
 
@@ -779,6 +861,30 @@ static int process_command(
             return 0;
         }
 
+        char *extra =
+    strtok_r(
+        NULL,
+        "",
+        &saveptr
+    );
+
+        if (extra != NULL) {
+
+            while (*extra == ' ') {
+                extra++;
+            }
+
+            if (*extra != '\0') {
+
+                send_text(
+                    client_fd,
+                    "ERR usage: EXISTS key\n"
+                );
+
+                return 0;
+            }
+        }
+
 
         int exists =
             db_exists(
@@ -808,11 +914,12 @@ static int process_command(
     }
 
 
+
     /*
-     * ========================================================
-     * SAVE
-     * ========================================================
-     */
+ * ========================================================
+ * SAVE
+ * ========================================================
+ */
     if (
         strcmp(
             command,
@@ -820,11 +927,25 @@ static int process_command(
         ) == 0
     ) {
 
-        /*
-         * db_compact() owns the persistence mutex.
-         *
-         * Do not lock it again here.
-         */
+        char *extra =
+            strtok_r(
+                NULL,
+                "",
+                &saveptr
+            );
+
+
+        if (!no_more_arguments(extra)) {
+
+            send_text(
+                client_fd,
+                "ERR usage: SAVE\n"
+            );
+
+            return 0;
+        }
+
+
         int result =
             db_compact(
                 db,
@@ -849,16 +970,15 @@ static int process_command(
             "OK\n"
         );
 
-
         return 0;
     }
 
 
     /*
-     * ========================================================
-     * INFO
-     * ========================================================
-     */
+ * ========================================================
+ * INFO
+ * ========================================================
+ */
     if (
         strcmp(
             command,
@@ -866,21 +986,29 @@ static int process_command(
         ) == 0
     ) {
 
-        int key_count =
-            db_count_keys(
-                db
+        char *extra =
+            strtok_r(
+                NULL,
+                "",
+                &saveptr
             );
 
 
-        if (key_count < 0) {
+        if (!no_more_arguments(extra)) {
 
             send_text(
                 client_fd,
-                "ERR info failed\n"
+                "ERR usage: INFO\n"
             );
 
             return 0;
         }
+
+
+        int keys =
+            db_count_keys(
+                db
+            );
 
 
         char response[256];
@@ -889,8 +1017,10 @@ static int process_command(
         snprintf(
             response,
             sizeof(response),
-            "MiniDB\nkeys: %d\nbuckets: %d\n",
-            key_count,
+            "MiniDB\n"
+            "keys: %d\n"
+            "buckets: %d\n",
+            keys,
             TABLE_SIZE
         );
 
@@ -900,22 +1030,40 @@ static int process_command(
             response
         );
 
-
         return 0;
     }
 
 
     /*
-     * ========================================================
-     * FLUSHDB
-     * ========================================================
-     */
+ * ========================================================
+ * FLUSHDB
+ * ========================================================
+ */
     if (
         strcmp(
             command,
             "FLUSHDB"
         ) == 0
     ) {
+
+        char *extra =
+            strtok_r(
+                NULL,
+                "",
+                &saveptr
+            );
+
+
+        if (!no_more_arguments(extra)) {
+
+            send_text(
+                client_fd,
+                "ERR usage: FLUSHDB\n"
+            );
+
+            return 0;
+        }
+
 
         pthread_mutex_lock(
             &db->persistence_mutex
@@ -928,12 +1076,12 @@ static int process_command(
             );
 
 
-        int result = -1;
+        int flush_result = 0;
 
 
         if (wal_result == 0) {
 
-            result =
+            flush_result =
                 db_flush(
                     db
                 );
@@ -956,7 +1104,7 @@ static int process_command(
         }
 
 
-        if (result != 0) {
+        if (flush_result != 0) {
 
             send_text(
                 client_fd,
@@ -972,22 +1120,40 @@ static int process_command(
             "OK\n"
         );
 
-
         return 0;
     }
 
 
     /*
-     * ========================================================
-     * HELP
-     * ========================================================
-     */
+ * ========================================================
+ * HELP
+ * ========================================================
+ */
     if (
         strcmp(
             command,
             "HELP"
         ) == 0
     ) {
+
+        char *extra =
+            strtok_r(
+                NULL,
+                "",
+                &saveptr
+            );
+
+
+        if (!no_more_arguments(extra)) {
+
+            send_text(
+                client_fd,
+                "ERR usage: HELP\n"
+            );
+
+            return 0;
+        }
+
 
         send_text(
             client_fd,
@@ -1004,22 +1170,40 @@ static int process_command(
             "EXIT\n"
         );
 
-
         return 0;
     }
 
 
     /*
-     * ========================================================
-     * EXIT
-     * ========================================================
-     */
+ * ========================================================
+ * EXIT
+ * ========================================================
+ */
     if (
         strcmp(
             command,
             "EXIT"
         ) == 0
     ) {
+
+        char *extra =
+            strtok_r(
+                NULL,
+                "",
+                &saveptr
+            );
+
+
+        if (!no_more_arguments(extra)) {
+
+            send_text(
+                client_fd,
+                "ERR usage: EXIT\n"
+            );
+
+            return 0;
+        }
+
 
         send_text(
             client_fd,
@@ -1074,13 +1258,8 @@ static void client_handler(
 {
     struct timeval timeout;
 
-
-    timeout.tv_sec =
-        1;
-
-    timeout.tv_usec =
-        0;
-
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
 
     setsockopt(
         client_fd,
@@ -1090,20 +1269,22 @@ static void client_handler(
         sizeof(timeout)
     );
 
-
     char input_buffer[
         CLIENT_BUFFER_SIZE
     ];
 
-
     size_t buffer_used = 0;
 
+    /*
+     * When a command becomes too large, we discard
+     * bytes until its terminating '\n' is found.
+     */
+    int discarding_oversized_command = 0;
 
     printf(
         "Client handler started: fd=%d\n",
         client_fd
     );
-
 
     while (1) {
 
@@ -1114,15 +1295,12 @@ static void client_handler(
             &pool->mutex
         );
 
-
         int shutting_down =
             pool->shutdown;
-
 
         pthread_mutex_unlock(
             &pool->mutex
         );
-
 
         if (shutting_down) {
 
@@ -1136,8 +1314,215 @@ static void client_handler(
 
 
         /*
-         * Make sure there is always space for
-         * a terminating '\0'.
+         * ====================================================
+         * DISCARD OVERSIZED COMMAND
+         * ====================================================
+         *
+         * The previous receive filled the normal command
+         * buffer without finding '\n'.
+         *
+         * Everything until the next '\n' belongs to that
+         * oversized command and must be discarded.
+         */
+        if (discarding_oversized_command) {
+
+            char discard_buffer[1024];
+
+            ssize_t bytes_received =
+                recv(
+                    client_fd,
+                    discard_buffer,
+                    sizeof(discard_buffer),
+                    0
+                );
+
+            if (bytes_received < 0) {
+
+                if (
+                    errno == EAGAIN ||
+                    errno == EWOULDBLOCK
+                ) {
+                    continue;
+                }
+
+                if (errno == EINTR) {
+                    continue;
+                }
+
+                perror("recv");
+
+                break;
+            }
+
+
+            /*
+             * Client disconnected while we were
+             * discarding the oversized command.
+             */
+            if (bytes_received == 0) {
+
+                printf(
+                    "Client disconnected while discarding oversized command: fd=%d\n",
+                    client_fd
+                );
+
+                break;
+            }
+
+
+            /*
+             * Find the terminating newline.
+             */
+            ssize_t newline_index = -1;
+
+            for (
+                ssize_t i = 0;
+                i < bytes_received;
+                i++
+            ) {
+
+                if (discard_buffer[i] == '\n') {
+
+                    newline_index = i;
+
+                    break;
+                }
+            }
+
+
+            /*
+             * No newline yet.
+             *
+             * Entire chunk still belongs to the
+             * oversized command.
+             */
+            if (newline_index < 0) {
+                continue;
+            }
+
+
+            /*
+             * The oversized command has now ended.
+             */
+            discarding_oversized_command = 0;
+
+
+            /*
+             * Preserve bytes after the oversized command.
+             *
+             * Example:
+             *
+             *   <oversized command>\nGET key\n
+             *
+             * The GET command must not be lost.
+             */
+            size_t remaining =
+                (size_t)bytes_received -
+                ((size_t)newline_index + 1);
+
+
+            if (remaining > 0) {
+
+                /*
+                 * discard_buffer is only 1024 bytes,
+                 * therefore remaining can never exceed
+                 * CLIENT_BUFFER_SIZE - 1.
+                 */
+                memcpy(
+                    input_buffer,
+                    discard_buffer + newline_index + 1,
+                    remaining
+                );
+
+                buffer_used =
+                    remaining;
+
+                input_buffer[
+                    buffer_used
+                ] = '\0';
+
+
+                /*
+                 * Process any complete commands that
+                 * followed the oversized command.
+                 */
+                while (1) {
+
+                    char *newline =
+                        strchr(
+                            input_buffer,
+                            '\n'
+                        );
+
+                    if (newline == NULL) {
+                        break;
+                    }
+
+
+                    *newline = '\0';
+
+
+                    int result =
+                        process_command(
+                            client_fd,
+                            input_buffer,
+                            db,
+                            wal
+                        );
+
+
+                    size_t consumed =
+                        (size_t)(
+                            newline -
+                            input_buffer
+                        ) + 1;
+
+
+                    size_t command_remaining =
+                        buffer_used -
+                        consumed;
+
+
+                    if (command_remaining > 0) {
+
+                        memmove(
+                            input_buffer,
+                            input_buffer + consumed,
+                            command_remaining
+                        );
+                    }
+
+
+                    buffer_used =
+                        command_remaining;
+
+
+                    input_buffer[
+                        buffer_used
+                    ] = '\0';
+
+
+                    if (result < 0) {
+                        return;
+                    }
+                }
+            }
+            else {
+
+                buffer_used = 0;
+            }
+
+            continue;
+        }
+
+
+        /*
+         * ====================================================
+         * NORMAL RECEIVE MODE
+         * ====================================================
+         *
+         * If the buffer is full and no newline exists,
+         * the current command is too large.
          */
         if (
             buffer_used >=
@@ -1149,7 +1534,16 @@ static void client_handler(
                 "ERR command too long\n"
             );
 
+            /*
+             * The bytes already in the buffer are part
+             * of the oversized command.
+             *
+             * Discard them and continue consuming the
+             * command from the socket until '\n'.
+             */
             buffer_used = 0;
+
+            discarding_oversized_command = 1;
 
             continue;
         }
@@ -1203,10 +1597,6 @@ static void client_handler(
             /*
              * Process a final unterminated command,
              * if one exists.
-             *
-             * This makes the server a little more
-             * forgiving of clients that close without
-             * sending a final newline.
              */
             if (buffer_used > 0) {
 
@@ -1249,8 +1639,11 @@ static void client_handler(
 
 
         /*
-         * Process EVERY complete command currently
-         * sitting in the receive buffer.
+         * ====================================================
+         * PROCESS COMPLETE COMMANDS
+         * ====================================================
+         *
+         * One recv() can contain multiple commands.
          */
         while (1) {
 
@@ -1282,8 +1675,7 @@ static void client_handler(
 
 
             /*
-             * How many bytes remain after
-             * this command?
+             * Calculate bytes consumed, including '\n'.
              */
             size_t consumed =
                 (size_t)(
@@ -1298,8 +1690,8 @@ static void client_handler(
 
 
             /*
-             * Move remaining commands to
-             * the beginning of the buffer.
+             * Move remaining commands to the
+             * beginning of the buffer.
              */
             if (remaining > 0) {
 
@@ -1329,21 +1721,8 @@ static void client_handler(
 
                 return;
             }
-
-
-            /*
-             * There may be another complete command
-             * already in the buffer.
-             *
-             * Go around again.
-             */
         }
     }
-
-
-    close(
-        client_fd
-    );
 }
 
 
@@ -1427,10 +1806,7 @@ static void *worker_function(
         );
 
 
-        thread_pool_register_client(
-    pool,
-    task.client_fd
-);
+        thread_pool_register_client(pool,task.client_fd);
 
         client_handler(
             task.client_fd,
@@ -1443,6 +1819,9 @@ static void *worker_function(
             pool,
             task.client_fd
         );
+
+        close(task.client_fd);
+
     }
 
 
