@@ -102,7 +102,7 @@ The main goal is simple:
              │ Persistence  │         │ + COMPACTION │
              └──────────────┘         └──────────────┘
 
-
+```
 ---
 
 # 🔄 Request Flow
