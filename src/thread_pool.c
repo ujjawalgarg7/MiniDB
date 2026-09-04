@@ -259,307 +259,136 @@ static int process_command(
      * SET key value with spaces EX seconds
      */
     if (
-        strcmp(
-            command,
-            "SET"
-        ) == 0
+    strcmp(
+        command,
+        "SET"
+    ) == 0
+) {
+
+    /*
+     * Get key.
+     */
+    char *key =
+        strtok_r(
+            NULL,
+            " ",
+            &saveptr
+        );
+
+
+    /*
+     * Get everything after the key.
+     *
+     * Example:
+     *
+     * SET message hello world
+     *
+     * value becomes:
+     *
+     * hello world
+     */
+    char *value =
+        strtok_r(
+            NULL,
+            "",
+            &saveptr
+        );
+
+
+    if (
+        key == NULL ||
+        value == NULL
     ) {
 
-        /*
-         * Get key.
-         */
-        char *key =
-            strtok_r(
-                NULL,
-                " ",
-                &saveptr
-            );
+        send_text(
+            client_fd,
+            "ERR usage: SET key value [EX seconds]\n"
+        );
+
+        return 0;
+    }
 
 
-        /*
-         * Get EVERYTHING after the key.
-         *
-         * Example:
-         *
-         * SET message hello world
-         *
-         * value becomes:
-         *
-         * hello world
-         */
-        char *value =
-            strtok_r(
-                NULL,
-                "",
-                &saveptr
-            );
+    /*
+     * Remove leading spaces.
+     */
+    while (*value == ' ') {
+        value++;
+    }
 
 
-        if (
-            key == NULL ||
-            value == NULL
-        ) {
-
-            send_text(
-                client_fd,
-                "ERR usage: SET key value [EX seconds]\n"
-            );
-
-            return 0;
-        }
+    /*
+     * Remove trailing spaces.
+     */
+    value =
+        trim_spaces(
+            value
+        );
 
 
-        /*
-         * Remove leading spaces.
-         */
-        while (*value == ' ') {
-            value++;
-        }
+    if (
+        value == NULL ||
+        *value == '\0'
+    ) {
+
+        send_text(
+            client_fd,
+            "ERR usage: SET key value [EX seconds]\n"
+        );
+
+        return 0;
+    }
 
 
-        /*
-         * Find EX.
-         *
-         * We only treat EX as an expiration option
-         * when it appears as a separate token.
-         */
+    /*
+     * Look for an EX option.
+     *
+     * EX is only treated as an option when it
+     * appears as a separate token.
+     */
         char *ex_position = NULL;
-
 
         char *scan =
             value;
 
-
         while (*scan != '\0') {
 
+            /*
+             * EX must begin at the start of the
+             * value or after a space.
+             */
             if (
+                (scan == value ||
+                 scan[-1] == ' ') &&
+
                 (scan[0] == 'E' ||
                  scan[0] == 'e') &&
 
                 (scan[1] == 'X' ||
                  scan[1] == 'x') &&
 
-                scan[2] == ' ' &&
-
                 (
-                    scan == value ||
-                    scan[-1] == ' '
+                    scan[2] == ' ' ||
+                    scan[2] == '\0'
                 )
             ) {
 
-                /*
-                 * EX must be separated from the
-                 * value by a space on the left too,
-                 * unless it starts the value.
-                 */
-                if (
-                    scan == value ||
-                    scan[-1] == ' '
-                ) {
+                ex_position =
+                    scan;
 
-                    ex_position =
-                        scan;
-
-                    break;
-                }
+                break;
             }
-
 
             scan++;
         }
 
 
-        /*
-         * ----------------------------------------------------
-         * NORMAL SET
-         * ----------------------------------------------------
-         */
-        if (ex_position == NULL) {
-
-            value =
-                trim_spaces(value);
-
-
-            if (
-                value == NULL ||
-                *value == '\0'
-            ) {
-
-                send_text(
-                    client_fd,
-                    "ERR usage: SET key value [EX seconds]\n"
-                );
-
-                return 0;
-            }
-
-
-            pthread_mutex_lock(
-                &db->persistence_mutex
-            );
-
-
-            /*
-             * WAL first.
-             */
-            int wal_result =
-                wal_log_set(
-                    wal,
-                    key,
-                    value,
-                    "0"
-                );
-
-
-            /*
-             * Only update the database if
-             * the WAL write succeeded.
-             */
-            if (wal_result == 0) {
-
-                db_set(
-                    db,
-                    key,
-                    value
-                );
-            }
-
-
-            pthread_mutex_unlock(
-                &db->persistence_mutex
-            );
-
-
-            if (wal_result != 0) {
-
-                send_text(
-                    client_fd,
-                    "ERR WAL write failed\n"
-                );
-
-                return 0;
-            }
-
-
-            send_text(
-                client_fd,
-                "OK\n"
-            );
-
-
-            return 0;
-        }
-
-
-        /*
-         * ----------------------------------------------------
-         * SET ... EX seconds
-         * ----------------------------------------------------
-         */
-
-
-        /*
-         * Cut off the value before EX.
-         */
-        *ex_position =
-            '\0';
-
-
-        value =
-            trim_spaces(value);
-
-
-        if (
-            value == NULL ||
-            *value == '\0'
-        ) {
-
-            send_text(
-                client_fd,
-                "ERR usage: SET key value [EX seconds]\n"
-            );
-
-            return 0;
-        }
-
-
-        /*
-         * ex_position currently points to:
-         *
-         * EX 10
-         *
-         * so +2 gets us past EX,
-         * and then we skip spaces.
-         */
-        char *seconds_str =
-            ex_position + 2;
-
-
-        while (*seconds_str == ' ') {
-            seconds_str++;
-        }
-
-
-        /*
-         * Missing expiration.
-         */
-        if (*seconds_str == '\0') {
-
-            send_text(
-                client_fd,
-                "ERR missing expiration time\n"
-            );
-
-            return 0;
-        }
-
-
-        /*
-         * Validate the number.
-         */
-        char *endptr = NULL;
-
-
-        long seconds =
-            strtol(
-                seconds_str,
-                &endptr,
-                10
-            );
-
-
-        if (
-            endptr == seconds_str ||
-            *endptr != '\0' ||
-            seconds <= 0
-        ) {
-
-            send_text(
-                client_fd,
-                "ERR invalid expiration time\n"
-            );
-
-            return 0;
-        }
-
-
-        /*
-         * Calculate absolute expiration timestamp.
-         */
-        time_t expires_at =
-            time(NULL) + seconds;
-
-
-        char expiration_string[64];
-
-
-        snprintf(
-            expiration_string,
-            sizeof(expiration_string),
-            "%lld",
-            (long long)expires_at
-        );
-
+    /*
+     * ----------------------------------------------------
+     * NORMAL SET
+     * ----------------------------------------------------
+     */
+    if (ex_position == NULL) {
 
         pthread_mutex_lock(
             &db->persistence_mutex
@@ -574,20 +403,20 @@ static int process_command(
                 wal,
                 key,
                 value,
-                expiration_string
+                "0"
             );
 
 
         /*
-         * Only update database if WAL succeeded.
+         * Only update the database if
+         * the WAL write succeeded.
          */
         if (wal_result == 0) {
 
-            db_set_expires_at(
+            db_set(
                 db,
                 key,
-                value,
-                expires_at
+                value
             );
         }
 
@@ -616,6 +445,185 @@ static int process_command(
 
         return 0;
     }
+
+
+    /*
+     * ----------------------------------------------------
+     * SET ... EX seconds
+     * ----------------------------------------------------
+     */
+
+
+    /*
+     * Cut the value before EX.
+     */
+    *ex_position =
+        '\0';
+
+
+    value =
+        trim_spaces(
+            value
+        );
+
+
+    if (
+        value == NULL ||
+        *value == '\0'
+    ) {
+
+        send_text(
+            client_fd,
+            "ERR usage: SET key value [EX seconds]\n"
+        );
+
+        return 0;
+    }
+
+
+    /*
+     * Move past "EX".
+     */
+    char *seconds_str =
+        ex_position + 2;
+
+
+    /*
+     * Skip spaces.
+     */
+    while (*seconds_str == ' ') {
+        seconds_str++;
+    }
+
+
+    /*
+     * Missing expiration.
+     */
+    if (*seconds_str == '\0') {
+
+        send_text(
+            client_fd,
+            "ERR missing expiration time\n"
+        );
+
+        return 0;
+    }
+
+
+    /*
+     * Validate the expiration number.
+     */
+    char *endptr = NULL;
+
+
+    long seconds =
+        strtol(
+            seconds_str,
+            &endptr,
+            10
+        );
+
+
+    /*
+     * Reject:
+     *
+     * EX abc
+     * EX 0
+     * EX -5
+     * EX 10 extra
+     */
+    if (
+        endptr == seconds_str ||
+        *endptr != '\0' ||
+        seconds <= 0
+    ) {
+
+        send_text(
+            client_fd,
+            "ERR invalid expiration time\n"
+        );
+
+        return 0;
+    }
+
+
+    /*
+     * Calculate absolute expiration timestamp.
+     */
+
+    time_t now = time(NULL);
+
+
+    time_t expires_at =
+        now + seconds;
+
+
+    char expiration_string[64];
+
+
+    snprintf(
+        expiration_string,
+        sizeof(expiration_string),
+        "%lld",
+        (long long)expires_at
+    );
+
+
+    pthread_mutex_lock(
+        &db->persistence_mutex
+    );
+
+
+    /*
+     * WAL first.
+     */
+    int wal_result =
+        wal_log_set(
+            wal,
+            key,
+            value,
+            expiration_string
+        );
+
+
+    /*
+     * Only update database if WAL succeeded.
+     */
+    if (wal_result == 0) {
+
+        db_set_expires_at(
+            db,
+            key,
+            value,
+            expires_at
+        );
+    }
+
+
+    pthread_mutex_unlock(
+        &db->persistence_mutex
+    );
+
+
+    if (wal_result != 0) {
+
+        send_text(
+            client_fd,
+            "ERR WAL write failed\n"
+        );
+
+        return 0;
+    }
+
+
+    send_text(
+        client_fd,
+        "OK\n"
+    );
+
+
+    return 0;
+}
 
 
     /*

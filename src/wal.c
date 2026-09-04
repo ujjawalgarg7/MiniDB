@@ -439,7 +439,7 @@ int wal_reset(WAL *wal)
         wal->file == NULL) {
 
         return -1;
-        }
+    }
 
     /*
      * WAL must already be protected by wal->lock
@@ -462,7 +462,7 @@ int wal_reset(WAL *wal)
         (size_t)written >= sizeof(temp_filename)) {
 
         return -1;
-        }
+    }
 
     FILE *temp_file =
         fopen(
@@ -509,35 +509,42 @@ int wal_reset(WAL *wal)
     /*
      * Atomically replace the old WAL.
      */
-    if (
-    rename(temp_filename, wal->filename) != 0
-) {
+    if (rename(temp_filename, wal->filename) != 0) {
         perror("rename WAL");
         unlink(temp_filename);
         return -1;
-}
-
+    }
 
     /*
-     * Make the WAL directory entry change durable.
+     * The directory entry change is now made durable.
+     *
+     * IMPORTANT:
+     * Even if this fsync fails, the pathname has already
+     * been replaced. We must still close the old FILE *
+     * and reopen the new WAL before returning.
      */
-    if (fsync_parent_directory(wal->filename) != 0) {
+    int directory_sync_failed =
+        fsync_parent_directory(wal->filename) != 0;
 
+    if (directory_sync_failed) {
         fprintf(
             stderr,
             "Failed to synchronize WAL directory.\n"
         );
-
-        return -1;
     }
 
     /*
      * The existing FILE * still refers to the old
      * inode, so close it and reopen the newly
-     * installed WAL.
+     * created WAL.
      */
     if (fclose(wal->file) != 0) {
         wal->file = NULL;
+
+        /*
+         * The old FILE * is no longer usable, but the
+         * WAL pathname has already been replaced.
+         */
         return -1;
     }
 
@@ -548,7 +555,15 @@ int wal_reset(WAL *wal)
         );
 
     if (wal->file == NULL) {
-        perror("reopen WAL");
+        perror("reopen WAL after reset");
+        return -1;
+    }
+
+    /*
+     * Report a directory fsync failure after restoring
+     * wal->file to the new WAL inode.
+     */
+    if (directory_sync_failed) {
         return -1;
     }
 
